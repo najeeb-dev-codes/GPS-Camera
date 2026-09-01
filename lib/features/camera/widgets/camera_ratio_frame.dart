@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 /// Keeps the camera preview inside the selected ratio.

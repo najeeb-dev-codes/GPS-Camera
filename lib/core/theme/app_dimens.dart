@@ -1,6 +1,3 @@
-
-
-
 /// Spacing, radius and sizing tokens for GeoStamp Camera, matched against
 /// the mockup grid (card padding, button height, badge/pill radius, icon
 /// sizes in the camera toolbar and bottom nav).

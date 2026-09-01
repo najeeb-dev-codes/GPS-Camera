@@ -1,8 +1,3 @@
-
-
-
-
-
 import 'package:dio/dio.dart';
 
 import '../config/app_config.dart';
@@ -19,9 +14,11 @@ class DioClient {
     _dio = Dio(
       BaseOptions(
         baseUrl: AppConfig.baseUrl,
-        connectTimeout: const Duration(seconds: 15),
-        sendTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 15),
+        // Render may need extra time when a service is starting from an idle
+        // state. These production-safe timeouts prevent an early failure.
+        connectTimeout: const Duration(seconds: 45),
+        sendTimeout: const Duration(seconds: 45),
+        receiveTimeout: const Duration(seconds: 45),
         headers: const {
           'Content-Type': 'application/json',
           'Accept': 'application/json',

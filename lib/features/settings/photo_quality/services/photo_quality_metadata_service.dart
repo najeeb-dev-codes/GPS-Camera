@@ -1,7 +1,3 @@
-
-
-
-
 import 'package:native_exif/native_exif.dart';
 
 import '../../../../shared/widgets/widgets.dart';

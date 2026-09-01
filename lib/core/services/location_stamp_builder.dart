@@ -1,6 +1,3 @@
-
-
-
 import '../../shared/widgets/widgets.dart';
 import 'location_service.dart';
 
@@ -44,9 +41,17 @@ class LocationStampBuilder {
       // No live data source is wired for these yet.
       weather: null,
       pressure: null,
-      compassDirection: null,
+      compassDirection: _formatCompass(snapshot?.heading),
       note: note,
     );
+  }
+
+  static String? _formatCompass(double? heading) {
+    if (heading == null || !heading.isFinite || heading < 0) return null;
+    const directions = <String>['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    final normalized = heading % 360;
+    final index = ((normalized + 22.5) ~/ 45) % directions.length;
+    return '${directions[index]} ${normalized.round()}°';
   }
 
   // ---------------------------------------------------------------------------

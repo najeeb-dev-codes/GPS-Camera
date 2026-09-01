@@ -1,8 +1,3 @@
-
-
-
-
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -22,6 +17,8 @@ class CapturedPhoto {
     required this.capturedAt,
     this.stampData,
     this.captureMetadata,
+    this.projectId,
+    this.isFavorite = false,
   });
 
   final String id;
@@ -30,6 +27,8 @@ class CapturedPhoto {
   final DateTime capturedAt;
   final GpsStampData? stampData;
   final PhotoCaptureMetadata? captureMetadata;
+  final String? projectId;
+  final bool isFavorite;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -39,6 +38,8 @@ class CapturedPhoto {
       'capturedAt': capturedAt.toIso8601String(),
       'stampData': stampData?.toJson(),
       'captureMetadata': captureMetadata?.toJson(),
+      'projectId': projectId,
+      'isFavorite': isFavorite,
     };
   }
 
@@ -62,6 +63,24 @@ class CapturedPhoto {
               Map<String, dynamic>.from(json['captureMetadata'] as Map),
             )
           : null,
+      projectId: json['projectId'] as String?,
+      isFavorite: json['isFavorite'] as bool? ?? false,
+    );
+  }
+
+  CapturedPhoto copyWith({
+    String? projectId,
+    bool? isFavorite,
+  }) {
+    return CapturedPhoto(
+      id: id,
+      path: path,
+      location: location,
+      capturedAt: capturedAt,
+      stampData: stampData,
+      captureMetadata: captureMetadata,
+      projectId: projectId ?? this.projectId,
+      isFavorite: isFavorite ?? this.isFavorite,
     );
   }
 }
@@ -283,6 +302,7 @@ class CapturedPhotoService {
     required DateTime capturedAt,
     required GpsStampData stampData,
     required PhotoCaptureMetadata captureMetadata,
+    String? projectId,
   }) async {
     final sourceFile = File(sourcePath);
 
@@ -331,10 +351,16 @@ class CapturedPhotoService {
       capturedAt: capturedAt,
       stampData: stampData,
       captureMetadata: actualMetadata,
+      projectId: projectId,
     );
 
     final existingPhotos = await loadPhotos();
-    await _write(<CapturedPhoto>[photo, ...existingPhotos]);
+    // Saving can be retried when device-gallery export fails. Replace the
+    // same capture record instead of creating duplicate gallery entries.
+    await _write(<CapturedPhoto>[
+      photo,
+      ...existingPhotos.where((existing) => existing.id != photo.id),
+    ]);
 
     return photo;
   }
@@ -419,6 +445,44 @@ class CapturedPhotoService {
     await _write(
       remainingPhotos,
     );
+  }
+
+  // ===========================================================================
+  // FAVORITES / PROJECT ASSIGNMENT
+  // ===========================================================================
+
+  static Future<void> setFavorite(
+    Iterable<String> ids, {
+    required bool favorite,
+  }) async {
+    final selected = ids.toSet();
+    final photos = await loadPhotos();
+    await _write(
+      photos
+          .map(
+            (photo) => selected.contains(photo.id)
+                ? photo.copyWith(isFavorite: favorite)
+                : photo,
+          )
+          .toList(),
+    );
+  }
+
+  static Future<List<CapturedPhoto>> moveToProject(
+    Iterable<String> ids, {
+    required String projectId,
+  }) async {
+    final selected = ids.toSet();
+    final photos = await loadPhotos();
+    final moved = <CapturedPhoto>[];
+    final updated = photos.map((photo) {
+      if (!selected.contains(photo.id)) return photo;
+      final value = photo.copyWith(projectId: projectId);
+      moved.add(value);
+      return value;
+    }).toList();
+    await _write(updated);
+    return moved;
   }
 
   // ===========================================================================

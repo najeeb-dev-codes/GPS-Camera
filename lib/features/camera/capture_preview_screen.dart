@@ -1,8 +1,3 @@
-
-
-
-
-
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -11,7 +6,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-import '../../core/services/captured_photo_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
@@ -19,8 +13,11 @@ import '../../shared/widgets/widgets.dart';
 import '../settings/photo_quality/models/photo_quality_settings.dart';
 import '../settings/photo_quality/services/photo_quality_processing_service.dart';
 import '../gallery/gallery_screen.dart';
+import '../projects/project_details_screen.dart';
 import '../stamp_templates/stamp_templates_screen.dart';
+import 'save_photo_to_screen.dart';
 import 'widgets/image_responsive_stamp.dart';
+import 'widgets/stamp_layout_metrics.dart';
 
 class CapturePreviewScreen extends StatefulWidget {
   const CapturePreviewScreen({
@@ -32,6 +29,7 @@ class CapturePreviewScreen extends StatefulWidget {
     required this.capturedAt,
     required this.photoAspectRatio,
     required this.photoQualitySettings,
+    this.initialProjectId,
   });
 
   /// Normalized upright PNG used only for review/compositing.
@@ -40,7 +38,6 @@ class CapturePreviewScreen extends StatefulWidget {
   /// Untouched camera JPEG used only as the source of safe EXIF fields.
   final String originalCameraPath;
   final int templateIndex;
-
   /// Frozen live GPS stamp captured at shutter time.
   final GpsStampData stampData;
   final DateTime capturedAt;
@@ -50,6 +47,7 @@ class CapturePreviewScreen extends StatefulWidget {
 
   /// Frozen Photo Quality settings used for this specific capture.
   final PhotoQualitySettings photoQualitySettings;
+  final String? initialProjectId;
 
   @override
   State<CapturePreviewScreen> createState() =>
@@ -293,29 +291,32 @@ class _CapturePreviewScreenState
 
       processedTemporaryFile = File(processed.path);
 
-      // 3. Persist the processed file + exact capture-quality metadata.
-      final savedPhoto = await CapturedPhotoService.saveProcessedPhoto(
-        sourcePath: processed.path,
-        location: widget.stampData.title ?? widget.stampData.address,
-        capturedAt: widget.capturedAt,
-        stampData: widget.stampData,
-        captureMetadata: processed.metadata,
+      // 3. Let the user choose Device Gallery or a persistent Project Folder.
+      // The generated image is already stamped and quality-processed, so the
+      // destination screen only decides where the exact same file is stored.
+      final destinationResult = await Navigator.of(context).push<SavePhotoResult>(
+        MaterialPageRoute(
+          builder: (_) => SavePhotoToScreen(
+            processedImagePath: processed.path,
+            location: widget.stampData.title ?? widget.stampData.address,
+            capturedAt: widget.capturedAt,
+            stampData: widget.stampData,
+            captureMetadata: processed.metadata,
+            initialProjectId: widget.initialProjectId,
+          ),
+        ),
       );
 
-      // 4. Device gallery receives the same final file used by the app gallery.
-      await CapturedPhotoService.saveToDeviceGallery(
-        imagePath: savedPhoto.path,
-      );
+      if (destinationResult == null || !mounted) return;
 
-      // 5. Camera original is temporary once the processed result is saved.
       await _deleteTemporaryFiles();
-
       if (!mounted) return;
 
+      final destination = destinationResult.projectId == null
+          ? const GalleryScreen()
+          : ProjectDetailsScreen(projectId: destinationResult.projectId!);
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const GalleryScreen(),
-        ),
+        MaterialPageRoute(builder: (_) => destination),
       );
     } catch (error) {
       debugPrint('Save photo error: $error');
@@ -454,12 +455,11 @@ class _CapturePreviewScreenState
                                             photoConstraints.maxWidth;
                                         final photoHeight =
                                             photoConstraints.maxHeight;
-                                        final labelHeight =
-                                            _showSignatureLabel
-                                                ? (photoHeight * 0.075)
-                                                    .clamp(42.0, 76.0)
-                                                    .toDouble()
-                                                : 0.0;
+                                        final labelHeight = _showSignatureLabel
+                                            ? StampLayoutMetrics.labelHeight(
+                                                photoHeight,
+                                              )
+                                            : 0.0;
                                         final labelBottomGap =
                                             (photoHeight * 0.025)
                                                 .clamp(4.0, 12.0)
@@ -496,6 +496,8 @@ class _CapturePreviewScreenState
                                             IgnorePointer(
                                               child: ImageResponsiveStamp(
                                                 data: _stampData,
+                                                templateIndex:
+                                                    _selectedTemplateIndex,
                                                 imageSize: Size(
                                                   photoWidth,
                                                   photoHeight,
@@ -509,8 +511,14 @@ class _CapturePreviewScreenState
                                             ),
                                             if (_showSignatureLabel)
                                               Positioned(
-                                                left: photoWidth * 0.03,
-                                                right: photoWidth * 0.03,
+                                                left: StampLayoutMetrics
+                                                    .horizontalInset(
+                                                  photoWidth,
+                                                ),
+                                                right: StampLayoutMetrics
+                                                    .horizontalInset(
+                                                  photoWidth,
+                                                ),
                                                 bottom: labelBottomGap,
                                                 height: labelHeight,
                                                 child: Container(
@@ -633,50 +641,52 @@ class _CapturePreviewScreenState
   // ===========================================================================
 
   Widget _buildSignatureToggle() {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _isSaving
-            ? null
-            : () => setState(
-                  () => _showSignatureLabel = !_showSignatureLabel,
-                ),
-        borderRadius: BorderRadius.circular(24),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Signature panel',
-                style: AppTypography.h3.copyWith(
-                  color: AppColors.textPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 52,
-                height: 32,
-                child: FittedBox(
-                  fit: BoxFit.contain,
-                  child: Switch.adaptive(
-                    value: _showSignatureLabel,
-                    activeColor: AppColors.primary,
-                    activeTrackColor:
-                        AppColors.primary.withValues(alpha: 0.45),
-                    onChanged: _isSaving
-                        ? null
-                        : (enabled) {
-                            setState(() {
-                              _showSignatureLabel = enabled;
-                            });
-                          },
+    return SizedBox(
+      width: double.infinity,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _isSaving
+              ? null
+              : () => setState(
+                    () => _showSignatureLabel = !_showSignatureLabel,
+                  ),
+          borderRadius: BorderRadius.circular(24),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Signature panel',
+                  style: AppTypography.h3.copyWith(
+                    color: AppColors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-            ],
+                SizedBox(
+                  width: 52,
+                  height: 32,
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: Switch.adaptive(
+                      value: _showSignatureLabel,
+                      activeColor: AppColors.primary,
+                      activeTrackColor:
+                          AppColors.primary.withValues(alpha: 0.45),
+                      onChanged: _isSaving
+                          ? null
+                          : (enabled) {
+                              setState(() {
+                                _showSignatureLabel = enabled;
+                              });
+                            },
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -685,7 +695,7 @@ class _CapturePreviewScreenState
 
   Widget _buildLocationVerifiedMessage() {
     return SizedBox(
-      height: 34,
+      height: 42,
       child: AnimatedOpacity(
         opacity: _showLocationVerified ? 1 : 0,
         duration: const Duration(milliseconds: 220),
@@ -695,7 +705,7 @@ class _CapturePreviewScreenState
           children: [
             Icon(
               Icons.location_on_rounded,
-              size: 15,
+              size: 19,
               color: Color(0xFF169447),
             ),
             SizedBox(width: 5),
@@ -703,8 +713,8 @@ class _CapturePreviewScreenState
               'Location verified',
               style: TextStyle(
                 color: Color(0xFF169447),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],

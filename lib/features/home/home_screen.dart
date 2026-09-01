@@ -1,4 +1,3 @@
-
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -11,6 +10,8 @@ import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 import '../camera/live_camera_screen.dart';
 import '../gallery/photo_details_screen.dart';
+import '../projects/project_data.dart';
+import '../projects/project_details_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -47,17 +48,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoadingCaptures = true;
 
   // ===========================================================================
-  // PROJECT MOCK DATA
+  // RECENT PROJECT
   // ===========================================================================
 
-  static const String _recentProjectName = 'Highway Project';
-
-  static const String _recentProjectImageAsset =
-      'assets/images/projects/highway_project.jpg';
-
-  static const int _recentProjectPhotoCount = 68;
-
-  static const String _recentProjectUpdatedLabel = 'Updated today';
+  final ProjectRepository _projectRepository = ProjectRepository.instance;
+  ProjectData? _recentProject;
 
   // ===========================================================================
   // INIT
@@ -66,8 +61,23 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-
+    _projectRepository.addListener(_refreshProject);
     _loadRecentCaptures();
+  }
+
+  void _refreshProject() {
+    if (!mounted) return;
+    setState(() {
+      _recentProject = _projectRepository.projects.isEmpty
+          ? null
+          : _projectRepository.projects.first;
+    });
+  }
+
+  @override
+  void dispose() {
+    _projectRepository.removeListener(_refreshProject);
+    super.dispose();
   }
 
   // ===========================================================================
@@ -77,6 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadRecentCaptures() async {
     try {
       final photos = await CapturedPhotoService.loadPhotos();
+      await _projectRepository.ensureLoaded(refreshPhotos: true);
 
       if (!mounted) {
         return;
@@ -87,6 +98,9 @@ class _HomeScreenState extends State<HomeScreen> {
         //
         // Only show latest 5 photos on Home Screen.
         _recentCaptures = photos.take(5).toList();
+        _recentProject = _projectRepository.projects.isEmpty
+            ? null
+            : _projectRepository.projects.first;
 
         _isLoadingCaptures = false;
       });
@@ -225,13 +239,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _handleRecentProjectTap(
     BuildContext context,
+    ProjectData project,
   ) {
     if (widget.onRecentProjectTap != null) {
       widget.onRecentProjectTap!();
       return;
     }
 
-    AppNavigator.goToProjects(context);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProjectDetailsScreen(projectId: project.id),
+      ),
+    );
   }
 
   // ===========================================================================
@@ -497,24 +516,25 @@ class _HomeScreenState extends State<HomeScreen> {
                         height: AppSpacing.md,
                       ),
 
-                      ProjectCard(
-                        name:
-                            _recentProjectName,
-                        photoCount:
-                            _recentProjectPhotoCount,
-                        updatedLabel:
-                            _recentProjectUpdatedLabel,
-                        imageProvider:
-                            _resolveImage(
-                          _recentProjectImageAsset,
+                      if (_recentProject != null)
+                        ProjectCard(
+                          name: _recentProject!.name,
+                          location: _recentProject!.location,
+                          photoCount: _recentProject!.photoCount,
+                          updatedLabel: 'Recently updated',
+                          imageProvider: _recentProject!.recentPhoto == null
+                              ? null
+                              : FileImage(File(_recentProject!.recentPhoto!.path)),
+                          showChevron: true,
+                          onTap: () =>
+                              _handleRecentProjectTap(context, _recentProject!),
+                        )
+                      else
+                        const EmptyStatePlaceholder(
+                          icon: Icons.folder_open_outlined,
+                          title: 'No projects yet',
+                          description: 'Create a project to organize photos.',
                         ),
-                        showChevron: true,
-                        onTap: () {
-                          _handleRecentProjectTap(
-                            context,
-                          );
-                        },
-                      ),
                     ],
                   ),
                 ),

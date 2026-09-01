@@ -1,10 +1,7 @@
-
-
-
-
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/navigation/app_navigator.dart';
 import '../../core/services/captured_photo_service.dart';
@@ -13,6 +10,7 @@ import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 import 'photo_details_screen.dart';
+import '../projects/project_data.dart';
 
 // =============================================================================
 // GALLERY PHOTO MODEL
@@ -122,6 +120,8 @@ class _GalleryScreenState
         });
       }
 
+      await ProjectRepository.instance.ensureLoaded(refreshPhotos: true);
+
       final capturedPhotos =
           await CapturedPhotoService
               .loadPhotos();
@@ -173,6 +173,15 @@ class _GalleryScreenState
                   _dateLabel(
                 photo.capturedAt,
               ),
+
+              projectName: photo.projectId == null
+                  ? null
+                  : ProjectRepository.instance
+                          .findById(photo.projectId!)
+                          ?.name ??
+                      'Project',
+
+              isFavorite: photo.isFavorite,
 
               // IMPORTANT
               //
@@ -449,22 +458,149 @@ class _GalleryScreenState
   // SHARE SELECTED
   // ===========================================================================
 
-  void _shareSelected() {
+  Future<void> _shareSelected() async {
     if (_selectedIds.isEmpty) {
       return;
     }
 
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-      SnackBar(
-        content: Text(
-          'Sharing '
-          '${_selectedIds.length} '
-          'selected '
-          '${_selectedIds.length == 1 ? 'photo' : 'photos'}...',
+    final files = _photos
+        .where((photo) => _selectedIds.contains(photo.id))
+        .map((photo) => photo.imagePath)
+        .whereType<String>()
+        .map(File.new)
+        .where((file) => file.existsSync())
+        .map((file) => XFile(file.path))
+        .toList();
+
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected photo files are unavailable.')),
+      );
+      return;
+    }
+
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'Share GPS Camera photos',
+          subject: 'GPS Camera photos',
+          files: files,
+          sharePositionOrigin: _shareOrigin(),
         ),
-      ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to share photos: $error')),
+      );
+    }
+  }
+
+  Rect? _shareOrigin() {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+  }
+
+  bool get _allVisibleSelected {
+    final visible = _visiblePhotos;
+    return visible.isNotEmpty &&
+        visible.every((photo) => _selectedIds.contains(photo.id));
+  }
+
+  Future<void> _moveSelectedToProject() async {
+    if (_selectedIds.isEmpty) return;
+    final repository = ProjectRepository.instance;
+    await repository.ensureLoaded(refreshPhotos: true);
+    if (!mounted) return;
+
+    final project = await showModalBottomSheet<ProjectData>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final projects = repository.projects
+            .where((item) => item.status == ProjectStatus.active)
+            .toList();
+        return SafeArea(
+          child: projects.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(28),
+                  child: EmptyStatePlaceholder(
+                    icon: Icons.folder_open_outlined,
+                    title: 'No active projects',
+                    description: 'Create a project from the Projects screen first.',
+                  ),
+                )
+              : ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.only(bottom: 12),
+                  children: [
+                    const ListTile(
+                      title: Text(
+                        'Move to project',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    ...projects.map(
+                      (item) => ListTile(
+                        leading: Icon(Icons.folder_outlined, color: item.color),
+                        title: Text(item.name),
+                        subtitle: Text(
+                          '${item.photoCount} photos • ${item.location}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => Navigator.of(sheetContext).pop(item),
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
     );
+
+    if (project == null || !mounted) return;
+    try {
+      final moved = await CapturedPhotoService.moveToProject(
+        _selectedIds,
+        projectId: project.id,
+      );
+      await repository.movePhotosToProject(project.id, moved);
+      if (!mounted) return;
+      _selectedIds.clear();
+      await _loadCapturedPhotos();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Photos moved to ${project.name}.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to move photos: $error')),
+      );
+    }
+  }
+
+  Future<void> _setSelectedFavorite() async {
+    if (_selectedIds.isEmpty) return;
+    final selectedPhotos =
+        _photos.where((photo) => _selectedIds.contains(photo.id)).toList();
+    final remove = selectedPhotos.isNotEmpty &&
+        selectedPhotos.every((photo) => photo.isFavorite);
+    try {
+      await CapturedPhotoService.setFavorite(
+        _selectedIds,
+        favorite: !remove,
+      );
+      if (!mounted) return;
+      _selectedIds.clear();
+      await _loadCapturedPhotos();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to update favorites: $error')),
+      );
+    }
   }
 
   // ===========================================================================
@@ -569,6 +705,10 @@ class _GalleryScreenState
   // ===========================================================================
 
   void _showMoreActions() {
+    final selectedPhotos =
+        _photos.where((photo) => _selectedIds.contains(photo.id)).toList();
+    final removeFavorites = selectedPhotos.isNotEmpty &&
+        selectedPhotos.every((photo) => photo.isFavorite);
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -591,45 +731,24 @@ class _GalleryScreenState
                   Navigator.of(
                     sheetContext,
                   ).pop();
-
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(
-                    const SnackBar(
-                      content:
-                          Text(
-                        'Move to project coming soon.',
-                      ),
-                    ),
-                  );
+                  _moveSelectedToProject();
                 },
               ),
 
               ListTile(
-                leading:
-                    const Icon(
-                  Icons
-                      .favorite_border,
+                leading: Icon(
+                  removeFavorites ? Icons.favorite : Icons.favorite_border,
+                  color: removeFavorites ? AppColors.error : null,
                 ),
                 title:
-                    const Text(
-                  'Add to favorites',
+                    Text(
+                  removeFavorites ? 'Remove from favorites' : 'Add to favorites',
                 ),
                 onTap: () {
                   Navigator.of(
                     sheetContext,
                   ).pop();
-
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(
-                    const SnackBar(
-                      content:
-                          Text(
-                        'Favorites coming soon.',
-                      ),
-                    ),
-                  );
+                  _setSelectedFavorite();
                 },
               ),
 
@@ -639,8 +758,8 @@ class _GalleryScreenState
                   Icons.select_all,
                 ),
                 title:
-                    const Text(
-                  'Select all visible',
+                    Text(
+                  _allVisibleSelected ? 'Deselect all' : 'Select all',
                 ),
                 onTap: () {
                   Navigator.of(
@@ -648,17 +767,13 @@ class _GalleryScreenState
                   ).pop();
 
                   setState(() {
-                    _selectedIds
-                      ..clear()
-                      ..addAll(
-                        _visiblePhotos
-                            .map(
-                          (
-                            photo,
-                          ) =>
-                              photo.id,
-                        ),
-                      );
+                    if (_allVisibleSelected) {
+                      _selectedIds.clear();
+                    } else {
+                      _selectedIds
+                        ..clear()
+                        ..addAll(_visiblePhotos.map((photo) => photo.id));
+                    }
                   });
                 },
               ),
@@ -1030,6 +1145,26 @@ class _GalleryScreenState
               ),
             ),
 
+            if (photo.isFavorite)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.48),
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.favorite,
+                    color: AppColors.error,
+                    size: 19,
+                  ),
+                ),
+              ),
+
             // ===============================================================
             // SELECTED OVERLAY
             // ===============================================================
@@ -1229,15 +1364,6 @@ class _GalleryScreenState
             ),
           ),
 
-          IconButton(
-            onPressed:
-                _showFilterOptions,
-            icon:
-                const Icon(
-              Icons
-                  .filter_list_rounded,
-            ),
-          ),
         ],
       ),
 

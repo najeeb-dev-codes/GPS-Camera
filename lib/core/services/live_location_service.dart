@@ -1,6 +1,3 @@
-
-
-
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -274,6 +271,7 @@ final placemarks = await _geocoding.placemarkFromCoordinates(
       dateTime: formatDateTime(DateTime.now()),
       accuracy: accuracy,
       altitude: altitude,
+      compassDirection: _formatCompass(position.heading),
     );
 
     _latestData = data;
@@ -283,6 +281,14 @@ final placemarks = await _geocoding.placemarkFromCoordinates(
   static String formatCoordinates(double latitude, double longitude) {
     return 'Lat ${latitude.toStringAsFixed(6)}° '
         'Long ${longitude.toStringAsFixed(6)}°';
+  }
+
+  static String? _formatCompass(double heading) {
+    if (!heading.isFinite || heading < 0) return null;
+    const directions = <String>['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    final normalized = heading % 360;
+    final index = ((normalized + 22.5) ~/ 45) % directions.length;
+    return '${directions[index]} ${normalized.round()}°';
   }
 
   static String formatDateTime(DateTime value) {

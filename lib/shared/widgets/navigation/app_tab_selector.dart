@@ -31,13 +31,7 @@ class AppTabSelector extends StatelessWidget {
       mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
       children: List.generate(tabs.length, (index) {
         final selected = index == selectedIndex;
-        return Padding(
-          padding: EdgeInsets.only(
-            right: scrollable ? AppSpacing.sm : 0,
-          ),
-          child: Expanded(
-            flex: scrollable ? 0 : 1,
-            child: GestureDetector(
+      final tab = GestureDetector(
               onTap: () => onChanged(index),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
@@ -58,9 +52,16 @@ class AppTabSelector extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
-          ),
-        );
+          );
+
+      final padded = Padding(
+        padding: EdgeInsets.only(right: scrollable ? AppSpacing.sm : 0),
+        child: tab,
+      );
+
+      // Expanded must be a direct child of Row. Placing it below Padding
+      // causes an Incorrect use of ParentDataWidget runtime exception.
+      return scrollable ? padded : Expanded(child: padded);
       }),
     );
 

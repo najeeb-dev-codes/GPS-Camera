@@ -239,14 +239,6 @@ class _FieldCheckboxGrid extends StatelessWidget {
         settings.showCompass,
         (v) => settings.set(() => settings.showCompass = v ?? false)
       ),
-      'Altitude': (
-        settings.showAltitude,
-        (v) => settings.set(() => settings.showAltitude = v ?? false)
-      ),
-      'Accuracy': (
-        settings.showAccuracy,
-        (v) => settings.set(() => settings.showAccuracy = v ?? false)
-      ),
       'Note': (
         settings.showNote,
         (v) => settings.set(() => settings.showNote = v ?? false)

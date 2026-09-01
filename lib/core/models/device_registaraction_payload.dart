@@ -1,4 +1,3 @@
-
 /// Mirrors the field table in FLUTTER_API_INTEGRATION_GUIDE.md exactly.
 /// Only `installationId` is required by the backend — everything else is
 /// best-effort and sent as `null` when it isn't available yet (e.g.

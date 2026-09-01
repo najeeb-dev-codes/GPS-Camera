@@ -112,6 +112,29 @@ class _LocationGpsScreenState extends State<LocationGpsScreen> {
                             child: Divider(height: 1, color: AppColors.border),
                           ),
 
+                          Text(
+                            'Stamp location details',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: AppSpacing.xs),
+                          ToggleSettingRow(
+                            title: 'Show GPS accuracy on stamp',
+                            value: settings.showAccuracy,
+                            onChanged: (v) =>
+                                settings.set(() => settings.showAccuracy = v),
+                          ),
+                          ToggleSettingRow(
+                            title: 'Show altitude on stamp',
+                            value: settings.showAltitude,
+                            onChanged: (v) =>
+                                settings.set(() => settings.showAltitude = v),
+                          ),
+
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                            child: Divider(height: 1, color: AppColors.border),
+                          ),
+
                           DropdownSettingRow<String>(
                             title: 'Coordinate Format',
                             value: settings.coordinateFormat,

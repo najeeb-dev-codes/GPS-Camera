@@ -1,6 +1,6 @@
-
-
 import 'package:flutter/material.dart';
+
+import '../models/stamp_style_settings.dart';
 
 /// Single source of truth for every setting shown across the Settings
 /// screens (Camera, Stamp Defaults, Location & GPS, Photo Quality,
@@ -66,14 +66,39 @@ class AppSettingsService extends ChangeNotifier {
   bool showDateTime = true;
   bool showWeather = false;
   bool showCompass = true;
-  bool showAltitude = true;
-  bool showAccuracy = true;
+  // Optional stamp fields controlled from Location & GPS. Both are hidden in
+  // the default stamp, as the full location/address/coordinates remain the
+  // primary proof information.
+  bool showAltitude = false;
+  bool showAccuracy = false;
   bool showNote = false;
   bool showLogo = false;
 
   String stampPosition = 'Bottom Right';
   double stampDefaultSize = 90;
   double stampOpacity = 80;
+  /// Each of the five built-in stamps keeps its own editable style.
+  final List<StampStyleSettings> _stampStyles =
+      List<StampStyleSettings>.of(kDefaultStampStyles);
+
+  StampStyleSettings stampStyleFor(int templateIndex) {
+    final index = templateIndex.clamp(0, _stampStyles.length - 1).toInt();
+    return _stampStyles[index];
+  }
+
+  void saveStampStyle(int templateIndex, StampStyleSettings style) {
+    final index = templateIndex.clamp(0, _stampStyles.length - 1).toInt();
+    _stampStyles[index] = style;
+    notifyListeners();
+  }
+
+  StampStyleSettings resetStampStyle(int templateIndex) {
+    final index = templateIndex.clamp(0, kDefaultStampStyles.length - 1).toInt();
+    final defaults = kDefaultStampStyles[index];
+    _stampStyles[index] = defaults;
+    notifyListeners();
+    return defaults;
+  }
 
   // ---------------------------------------------------------------------
   // LOCATION & GPS
@@ -99,6 +124,8 @@ class AppSettingsService extends ChangeNotifier {
     coordinateFormat = 'Decimal Degrees';
     addressLanguage = 'English';
     refreshLocation = 'Every capture';
+    showAltitude = false;
+    showAccuracy = false;
     notifyListeners();
   }
 

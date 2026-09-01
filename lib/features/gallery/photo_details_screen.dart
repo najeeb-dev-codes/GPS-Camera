@@ -1,5 +1,3 @@
-
-
 import 'dart:io';
 import 'dart:ui';
 
@@ -38,11 +36,42 @@ class PhotoDetailsScreen extends StatefulWidget {
 
 class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
   _VisibleDetailPanel _visiblePanel = _VisibleDetailPanel.none;
+  final TransformationController _photoZoomController =
+      TransformationController();
   bool _isDeleting = false;
   bool _isSharing = false;
   bool _isExporting = false;
+  bool _isPhotoZoomed = false;
 
   bool get _isBusy => _isDeleting || _isSharing || _isExporting;
+
+  void _updatePhotoZoomState() {
+    final zoomed = _photoZoomController.value.getMaxScaleOnAxis() > 1.01;
+    if (zoomed == _isPhotoZoomed || !mounted) return;
+    setState(() => _isPhotoZoomed = zoomed);
+  }
+
+  void _finishPhotoZoom(ScaleEndDetails details) {
+    final scale = _photoZoomController.value.getMaxScaleOnAxis();
+
+    // Remove any tiny remaining scale/translation after the user pinches back
+    // to the fitted image. This guarantees a clean and repeatable 1x state.
+    if (scale <= 1.03) {
+      _photoZoomController.value = Matrix4.identity();
+      if (_isPhotoZoomed && mounted) {
+        setState(() => _isPhotoZoomed = false);
+      }
+      return;
+    }
+
+    _updatePhotoZoomState();
+  }
+
+  @override
+  void dispose() {
+    _photoZoomController.dispose();
+    super.dispose();
+  }
 
   String _formatCapturedDate(DateTime value) {
     const months = <String>[
@@ -302,6 +331,9 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 800),
                 child: SingleChildScrollView(
+                  physics: _isPhotoZoomed
+                      ? const NeverScrollableScrollPhysics()
+                      : const ClampingScrollPhysics(),
                   padding: EdgeInsets.fromLTRB(
                     horizontalPadding,
                     0,
@@ -311,9 +343,28 @@ class _PhotoDetailsScreenState extends State<PhotoDetailsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      AspectRatio(
-                        aspectRatio: photoAspectRatio,
-                        child: _buildPhoto(),
+                      SizedBox(
+                        width: double.infinity,
+                        child: AspectRatio(
+                          aspectRatio: photoAspectRatio,
+                          child: InteractiveViewer(
+                            transformationController:
+                                _photoZoomController,
+                            minScale: 1.0,
+                            maxScale: 6.0,
+                            panEnabled: true,
+                            scaleEnabled: true,
+                            constrained: true,
+                            clipBehavior: Clip.none,
+                            alignment: Alignment.center,
+                            onInteractionUpdate: (_) =>
+                                _updatePhotoZoomState(),
+                            onInteractionEnd: _finishPhotoZoom,
+                            child: SizedBox.expand(
+                              child: _buildPhoto(),
+                            ),
+                          ),
+                        ),
                       ),
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),

@@ -1,5 +1,3 @@
-
-
 import 'package:camera/camera.dart';
 
 /// Keeps all device-specific exposure logic outside the camera screen.

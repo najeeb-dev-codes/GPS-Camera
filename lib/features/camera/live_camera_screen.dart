@@ -1,11 +1,3 @@
-
-
-
-
-
-
-
-
 import 'dart:async';
 import 'dart:io';
 
@@ -34,7 +26,9 @@ import 'widgets/camera_ratio_frame.dart';
 import 'widgets/responsive_camera_stamp.dart';
 
 class LiveCameraScreen extends StatefulWidget {
-  const LiveCameraScreen({super.key});
+  const LiveCameraScreen({super.key, this.initialProjectId});
+
+  final String? initialProjectId;
 
   @override
   State<LiveCameraScreen> createState() => _LiveCameraScreenState();
@@ -474,6 +468,7 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
             capturedAt: capturedAt,
             photoAspectRatio: normalizedCapture.aspectRatio,
             photoQualitySettings: _photoQuality.current,
+            initialProjectId: widget.initialProjectId,
           ),
         ),
       );
@@ -666,6 +661,75 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     );
   }
 
+  /// Shared live-camera layer used by bounded ratios and edge-to-edge Full.
+  Widget _buildCameraSurface(
+    CameraController? controller, {
+    double stampBottomInset = 0,
+  }) {
+    final isReady = controller != null && controller.value.isInitialized;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _showBrightnessControl,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_isInitializing || !isReady)
+            const ColoredBox(
+              color: Colors.black,
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            )
+          else
+            _buildCameraPreview(controller!),
+          if (_gridOn)
+            const Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(painter: _CameraGridPainter()),
+              ),
+            ),
+          if (isReady)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: stampBottomInset),
+                  child: ResponsiveCameraStamp(
+                    data: _stampData,
+                    templateIndex: _selectedTemplateIndex,
+                    deviceOrientation: _deviceOrientation,
+                    rotateWithDevice: true,
+                  ),
+                ),
+              ),
+            ),
+          if (_showBrightness &&
+              !_isInitializing &&
+              isReady &&
+              _exposureService.isSupported)
+            Positioned.fill(
+              child: CameraBrightnessControl(
+                percentage: _brightnessPercentage,
+                onChanged: _setExposure,
+                onInteractionStart: _pauseBrightnessHide,
+                onInteractionEnd: _scheduleBrightnessHide,
+                deviceOrientation: _deviceOrientation,
+              ),
+            ),
+          if (_isCapturing)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.20),
+                child: const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // ===========================================================================
   // BUILD
   // ===========================================================================
@@ -689,7 +753,12 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
             final shutterSize =
                 width >= 600 ? 84.0 : 72.0;
 
-            return Column(
+            final isFull =
+                _selectedRatio == CameraAspectRatioOption.full;
+            final fullStampBottomInset =
+                shutterSize + (AppSpacing.lg * 2);
+
+            final controls = Column(
               children: [
                 // =============================================================
                 // TOP TOOLBAR
@@ -765,7 +834,9 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
                 // =============================================================
 
                 Expanded(
-                  child: Padding(
+                  child: isFull
+                      ? const SizedBox.expand()
+                      : Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: horizontalPadding * 0.4,
                     ),
@@ -784,87 +855,7 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
 
                         return CameraRatioFrame(
                           aspectRatio: frameRatio,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: _showBrightnessControl,
-                            child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                          if (_isInitializing ||
-                              controller == null ||
-                              !controller
-                                  .value.isInitialized)
-                            const ColoredBox(
-                              color: Colors.black,
-                              child: Center(
-                                child:
-                                    CircularProgressIndicator(
-                                  color: Colors.white,
-                                ),
-                              ),
-                            )
-                          else
-                            _buildCameraPreview(
-                              controller,
-                            ),
-
-                          // GRID
-                          if (_gridOn)
-                            const Positioned.fill(
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter:
-                                      _CameraGridPainter(),
-                                ),
-                              ),
-                            ),
-
-                          // LIVE STAMP
-                          if (controller != null &&
-                              controller.value.isInitialized)
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: ResponsiveCameraStamp(
-                                  data: _stampData,
-                                  deviceOrientation: _deviceOrientation,
-                                  rotateWithDevice: true,
-                                ),
-                              ),
-                            ),
-
-                          if (_showBrightness &&
-                              !_isInitializing &&
-                              controller != null &&
-                              controller.value.isInitialized &&
-                              _exposureService.isSupported)
-                            Positioned.fill(
-                              child: CameraBrightnessControl(
-                                percentage: _brightnessPercentage,
-                                onChanged: _setExposure,
-                                onInteractionStart: _pauseBrightnessHide,
-                                onInteractionEnd: _scheduleBrightnessHide,
-                                deviceOrientation: _deviceOrientation,
-                              ),
-                            ),
-
-                          if (_isCapturing)
-                            Positioned.fill(
-                              child: Container(
-                                color: Colors.black
-                                    .withValues(
-                                  alpha: 0.20,
-                                ),
-                                alignment:
-                                    Alignment.center,
-                                child:
-                                    const CircularProgressIndicator(
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                                ],
-                              ),
-                            ),
+                          child: _buildCameraSurface(controller),
                         );
                       },
                     ),
@@ -948,6 +939,21 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
                     ),
                   ),
                 ),
+              ],
+            );
+
+            if (!isFull) return controls;
+
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
+                  child: _buildCameraSurface(
+                    controller,
+                    stampBottomInset: fullStampBottomInset,
+                  ),
+                ),
+                controls,
               ],
             );
           },

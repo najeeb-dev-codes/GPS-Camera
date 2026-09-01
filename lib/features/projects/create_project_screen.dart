@@ -16,25 +16,19 @@ class CreateProjectScreen extends StatefulWidget {
 }
 
 class _CreateProjectScreenState extends State<CreateProjectScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _name;
   late final TextEditingController _code;
   late final TextEditingController _client;
   late final TextEditingController _location;
   late final TextEditingController _description;
-  late String _coverAsset;
   late Color _color;
   late bool _useStampPreset;
   late bool _autoSave;
   late String _template;
+  bool _saving = false;
 
-  static const _covers = [
-    'assets/images/projects/highway_project.jpg',
-    'assets/images/captures/site_inspection.jpg',
-    'assets/images/captures/road_work.jpg',
-    'assets/images/captures/site_visit.jpg',
-  ];
-  static const _colors = [
+  static const List<Color> _colors = <Color>[
     Color(0xFF4F21C8),
     Color(0xFF169C48),
     Color(0xFFFF6A00),
@@ -42,12 +36,13 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     Color(0xFFE01E37),
     Color(0xFF9E9E9E),
   ];
-  static const _templates = [
-    'Classic',
-    'Compact',
-    'Map Card',
-    'Field Work',
-    'Minimal'
+  static const List<String> _templates = <String>[
+    'Map Proof',
+    'Location Card',
+    'QR Split',
+    'Time & Place',
+    'Minimal Proof',
+    'Custom Style',
   ];
 
   bool get _editing => widget.project != null;
@@ -61,11 +56,10 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     _client = TextEditingController(text: project?.client ?? '');
     _location = TextEditingController(text: project?.location ?? '');
     _description = TextEditingController(text: project?.description ?? '');
-    _coverAsset = project?.coverAsset ?? _covers.first;
     _color = project?.color ?? _colors.first;
     _useStampPreset = project?.useStampPreset ?? true;
-    _autoSave = project?.autoSaveCaptures ?? true;
-    _template = project?.defaultStampTemplate ?? 'Field Work';
+    _autoSave = project?.autoSaveCaptures ?? false;
+    _template = project?.defaultStampTemplate ?? _templates.first;
   }
 
   @override
@@ -78,58 +72,62 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     super.dispose();
   }
 
-  InputDecoration _decoration(String label, {String? hint}) => InputDecoration(
-        labelText: label,
-        hintText: hint,
-        filled: true,
-        fillColor: AppColors.white,
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(AppRadius.sm)),
-      );
-
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'This field is required' : null;
 
-  void _save() {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    final repository = ProjectRepository.instance;
-    final existing = widget.project;
-    if (existing != null) {
-      existing
-        ..name = _name.text.trim()
-        ..code = _code.text.trim()
-        ..client = _client.text.trim()
-        ..location = _location.text.trim()
-        ..description = _description.text.trim()
-        ..coverAsset = _coverAsset
-        ..color = _color
-        ..useStampPreset = _useStampPreset
-        ..autoSaveCaptures = _autoSave
-        ..defaultStampTemplate = _template;
-      repository.update(existing);
-      Navigator.of(context).pop(existing);
-      return;
+  InputDecoration _decoration(String label) => InputDecoration(
+        labelText: label,
+        filled: true,
+        fillColor: AppColors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+      );
+
+  Future<void> _save() async {
+    if (_saving || !(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _saving = true);
+    try {
+      final repository = ProjectRepository.instance;
+      final existing = widget.project;
+      late final ProjectData project;
+      if (existing == null) {
+        project = ProjectData(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          name: _name.text.trim(),
+          code: _code.text.trim(),
+          client: _client.text.trim(),
+          location: _location.text.trim(),
+          description: _description.text.trim(),
+          color: _color,
+          status: ProjectStatus.active,
+          updatedAt: DateTime.now(),
+          useStampPreset: _useStampPreset,
+          autoSaveCaptures: _autoSave,
+          defaultStampTemplate: _template,
+        );
+        await repository.add(project);
+      } else {
+        project = existing
+          ..name = _name.text.trim()
+          ..code = _code.text.trim()
+          ..client = _client.text.trim()
+          ..location = _location.text.trim()
+          ..description = _description.text.trim()
+          ..color = _color
+          ..useStampPreset = _useStampPreset
+          ..autoSaveCaptures = _autoSave
+          ..defaultStampTemplate = _template;
+        await repository.update(project);
+      }
+      if (mounted) Navigator.of(context).pop(project);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to save project: $error')),
+      );
     }
-    final project = ProjectData(
-      id: '${DateTime.now().microsecondsSinceEpoch}',
-      name: _name.text.trim(),
-      code: _code.text.trim(),
-      client: _client.text.trim(),
-      location: _location.text.trim(),
-      description: _description.text.trim(),
-      coverAsset: _coverAsset,
-      color: _color,
-      status: ProjectStatus.active,
-      photos: const [],
-      locationCount: 0,
-      storageBytes: 0,
-      updatedAt: DateTime.now(),
-      useStampPreset: _useStampPreset,
-      autoSaveCaptures: _autoSave,
-      defaultStampTemplate: _template,
-    );
-    repository.add(project);
-    Navigator.of(context).pop(project);
   }
 
   @override
@@ -152,144 +150,65 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                     children: [
                       Expanded(
                         child: ListView(
-                          padding:
-                              EdgeInsets.fromLTRB(padding, 16, padding, 24),
+                          padding: EdgeInsets.fromLTRB(padding, 16, padding, 24),
                           children: [
                             if (wide)
-                              Row(children: [
-                                Expanded(
-                                    child: TextFormField(
-                                        controller: _name,
-                                        validator: _required,
-                                        decoration:
-                                            _decoration('Project Name'))),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                    child: TextFormField(
-                                        controller: _code,
-                                        validator: _required,
-                                        decoration:
-                                            _decoration('Project Code'))),
-                              ])
+                              Row(
+                                children: [
+                                  Expanded(child: _field(_name, 'Project Name')),
+                                  const SizedBox(width: 14),
+                                  Expanded(child: _field(_code, 'Project Code')),
+                                ],
+                              )
                             else ...[
-                              TextFormField(
-                                  controller: _name,
-                                  validator: _required,
-                                  decoration: _decoration('Project Name')),
+                              _field(_name, 'Project Name'),
                               const SizedBox(height: 14),
-                              TextFormField(
-                                  controller: _code,
-                                  validator: _required,
-                                  decoration: _decoration('Project Code')),
+                              _field(_code, 'Project Code'),
                             ],
                             const SizedBox(height: 14),
-                            TextFormField(
-                                controller: _client,
-                                validator: _required,
-                                decoration: _decoration('Client / Company')),
+                            _field(_client, 'Client / Company'),
+                            const SizedBox(height: 14),
+                            _field(_location, 'Location'),
                             const SizedBox(height: 14),
                             TextFormField(
-                                controller: _location,
-                                validator: _required,
-                                decoration: _decoration('Location')),
-                            const SizedBox(height: 14),
-                            TextFormField(
-                                controller: _description,
-                                minLines: 3,
-                                maxLines: 5,
-                                decoration: _decoration('Description')),
-                            const SizedBox(height: 18),
-                            Text('Cover',
-                                style: AppTypography.bodyMedium
-                                    .copyWith(fontWeight: FontWeight.w700)),
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              height: 76,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: _covers.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(width: 10),
-                                itemBuilder: (context, index) {
-                                  final cover = _covers[index];
-                                  final selected = cover == _coverAsset;
-                                  return InkWell(
-                                    onTap: () =>
-                                        setState(() => _coverAsset = cover),
-                                    borderRadius:
-                                        BorderRadius.circular(AppRadius.sm),
-                                    child: Stack(
-                                      children: [
-                                        ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                              AppRadius.sm),
-                                          child: Image.asset(
-                                            cover,
-                                            width: 92,
-                                            height: 76,
-                                            fit: BoxFit.cover,
-                                            errorBuilder:
-                                                (context, error, stackTrace) {
-                                              return Container(
-                                                width: 92,
-                                                height: 76,
-                                                color: AppColors.border,
-                                                alignment: Alignment.center,
-                                                child: const Icon(
-                                                    Icons.landscape_outlined),
-                                              );
-                                            },
-                                          ),
-                                        ),
-                                        if (selected)
-                                          Positioned.fill(
-                                            child: DecoratedBox(
-                                              decoration: BoxDecoration(
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                        AppRadius.sm),
-                                                border: Border.all(
-                                                  color: AppColors.primary,
-                                                  width: 3,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
+                              controller: _description,
+                              minLines: 3,
+                              maxLines: 5,
+                              decoration: _decoration('Description'),
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 18),
+                            Text('Project color', style: AppTypography.h3),
+                            const SizedBox(height: 10),
                             Wrap(
                               spacing: 14,
                               runSpacing: 10,
-                              children: _colors
-                                  .map((color) => InkWell(
-                                        onTap: () =>
-                                            setState(() => _color = color),
-                                        borderRadius: BorderRadius.circular(30),
-                                        child: Container(
-                                          width: 34,
-                                          height: 34,
-                                          decoration: BoxDecoration(
-                                              color: color,
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                  color: _color == color
-                                                      ? AppColors.textPrimary
-                                                      : Colors.transparent,
-                                                  width: 3)),
-                                          child: _color == color
-                                              ? const Icon(Icons.check,
-                                                  color: Colors.white, size: 18)
-                                              : null,
-                                        ),
-                                      ))
-                                  .toList(),
+                              children: _colors.map((color) {
+                                final selected = color == _color;
+                                return InkWell(
+                                  onTap: () => setState(() => _color = color),
+                                  borderRadius: BorderRadius.circular(24),
+                                  child: Container(
+                                    width: 38,
+                                    height: 38,
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: selected
+                                            ? AppColors.textPrimary
+                                            : Colors.transparent,
+                                        width: 3,
+                                      ),
+                                    ),
+                                    child: selected
+                                        ? const Icon(Icons.check,
+                                            size: 19, color: Colors.white)
+                                        : null,
+                                  ),
+                                );
+                              }).toList(),
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 10),
                             SwitchListTile.adaptive(
                               contentPadding: EdgeInsets.zero,
                               title: const Text('Use project stamp preset'),
@@ -300,8 +219,7 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                             ),
                             SwitchListTile.adaptive(
                               contentPadding: EdgeInsets.zero,
-                              title:
-                                  const Text('Auto-save captures to project'),
+                              title: const Text('Auto-save captures to project'),
                               value: _autoSave,
                               activeColor: AppColors.primary,
                               onChanged: (value) =>
@@ -311,12 +229,13 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                               value: _template,
                               decoration: _decoration('Default Stamp Template'),
                               items: _templates
-                                  .map((item) => DropdownMenuItem(
-                                      value: item, child: Text(item)))
+                                  .map((value) => DropdownMenuItem(
+                                      value: value, child: Text(value)))
                                   .toList(),
                               onChanged: (value) {
-                                if (value != null)
+                                if (value != null) {
                                   setState(() => _template = value);
+                                }
                               },
                             ),
                           ],
@@ -324,21 +243,29 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                       ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(padding, 8, padding, 16),
-                        child: Row(children: [
-                          Expanded(
+                        child: Row(
+                          children: [
+                            Expanded(
                               child: AppSecondaryButton(
-                                  label: 'Cancel',
-                                  icon: Icons.close,
-                                  onPressed: () =>
-                                      Navigator.of(context).pop())),
-                          const SizedBox(width: 12),
-                          Expanded(
+                                label: 'Cancel',
+                                onPressed: _saving
+                                    ? null
+                                    : () => Navigator.of(context).pop(),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
                               child: AppPrimaryButton(
-                                  label: _editing
-                                      ? 'Save Changes'
-                                      : 'Create Project',
-                                  onPressed: _save)),
-                        ]),
+                                label: _saving
+                                    ? 'Saving…'
+                                    : _editing
+                                        ? 'Save Changes'
+                                        : 'Create Project',
+                                onPressed: _saving ? null : _save,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -348,6 +275,14 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
           },
         ),
       ),
+    );
+  }
+
+  Widget _field(TextEditingController controller, String label) {
+    return TextFormField(
+      controller: controller,
+      validator: _required,
+      decoration: _decoration(label),
     );
   }
 }

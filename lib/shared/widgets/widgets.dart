@@ -13,6 +13,7 @@ export 'navigation/app_tab_selector.dart';
 
 // GPS / location
 export 'gps/gps_stamp_overlay.dart';
+export 'gps/gps_stamp_template_overlay.dart';
 export 'gps/gps_status_badge.dart';
 export 'gps/map_preview_thumbnail.dart';
 export 'gps/coordinate_info_row.dart';

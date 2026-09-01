@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 
 class AppConfig {
   AppConfig._();
@@ -24,22 +25,29 @@ class AppConfig {
   // ENVIRONMENT
   // ---------------------------------------------------------------------------
 
-  /// Set ENV=prod for production builds.
+  /// Optional environment override.
+  ///
+  /// When ENV is omitted:
+  /// - release builds automatically use production
+  /// - debug/profile builds automatically use development
   static const String _env =
       String.fromEnvironment(
     'ENV',
-    defaultValue: 'dev',
+    defaultValue: '',
   );
 
-  static bool get isProd => _env == 'prod';
+  static bool get isProd {
+    if (_env == 'prod') return true;
+    if (_env == 'dev') return false;
+    return kReleaseMode;
+  }
 
   // ---------------------------------------------------------------------------
   // PRODUCTION SERVER
   // ---------------------------------------------------------------------------
 
-  /// Replace this before production release.
   static const String _prodBaseUrl =
-      'https://yourdomain.com';
+      'https://gps-camera.onrender.com';
 
   // ---------------------------------------------------------------------------
   // DEVELOPMENT SERVER

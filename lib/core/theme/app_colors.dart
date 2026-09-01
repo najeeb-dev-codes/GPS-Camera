@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 import 'package:flutter/material.dart';
 
 /// Central color tokens for GeoStamp Camera, derived directly from the

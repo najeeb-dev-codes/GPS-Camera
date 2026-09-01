@@ -1,7 +1,3 @@
-
-
-
-
 import 'package:flutter/material.dart';
 
 import '../../core/models/camera_aspect_ratio.dart';
