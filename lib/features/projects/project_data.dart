@@ -43,19 +43,40 @@ class ProjectData {
   int get photoCount => _photos.length;
 
   int get locationCount => _photos
-      .map((photo) {
-        final latitude = photo.stampData?.latitude;
-        final longitude = photo.stampData?.longitude;
-        if (latitude != null && longitude != null) {
-          // Four decimal places groups fixes captured at approximately the
-          // same physical point while keeping genuinely different places.
-          return '${latitude.toStringAsFixed(4)},${longitude.toStringAsFixed(4)}';
-        }
-        return photo.location.trim().toLowerCase();
-      })
+      .map(_locationKey)
       .where((location) => location.isNotEmpty)
       .toSet()
       .length;
+
+  static String _locationKey(CapturedPhoto photo) {
+    final stamp = photo.stampData;
+    final candidates = <String?>[
+      stamp?.street,
+      stamp?.area, // sub-locality/village from reverse geocoding
+      stamp?.city,
+      stamp?.title,
+      photo.location,
+    ];
+    for (final candidate in candidates) {
+      final normalized = (candidate ?? '')
+          .trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'\s+'), ' ');
+      if (normalized.isNotEmpty) return normalized;
+    }
+    return '';
+  }
+
+  int get stampTemplateIndex {
+    final normalized = defaultStampTemplate.trim().toLowerCase();
+    return switch (normalized) {
+      'default' || 'location card' => 1,
+      'qr' || 'qr split' => 2,
+      'time & place' => 3,
+      'minimal' || 'minimal proof' => 4,
+      _ => 0, // Map and legacy Map Proof
+    };
+  }
 
   int get storageBytes => _photos.fold<int>(
         0,
@@ -124,12 +145,24 @@ class ProjectData {
       useStampPreset: json['useStampPreset'] as bool? ?? true,
       autoSaveCaptures: json['autoSaveCaptures'] as bool? ?? false,
       defaultStampTemplate:
-          (json['defaultStampTemplate'] as String?) ?? 'Map Proof',
+          _normalizeTemplateName(json['defaultStampTemplate'] as String?),
       photoIds: (json['photoIds'] as List<dynamic>? ?? const <dynamic>[])
           .whereType<String>()
           .toList(),
     );
   }
+}
+
+String _normalizeTemplateName(String? value) {
+  return switch (value?.trim().toLowerCase()) {
+    'location card' => 'Default',
+    'qr split' => 'QR',
+    'time & place' => 'Time & Place',
+    'minimal' || 'minimal proof' => 'Minimal',
+    'default' => 'Default',
+    'qr' => 'QR',
+    _ => 'Map',
+  };
 }
 
 class ProjectRepository extends ChangeNotifier {

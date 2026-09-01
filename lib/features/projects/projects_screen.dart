@@ -253,24 +253,42 @@ class _ProjectListCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: project.status == ProjectStatus.active
-                      ? const Color(0xFFDDF7E5)
-                      : AppColors.border,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  project.status == ProjectStatus.active ? 'Active' : 'Archived',
-                  style: TextStyle(
-                    color: project.status == ProjectStatus.active
-                        ? const Color(0xFF137A36)
-                        : AppColors.textSecondary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: project.color,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                      boxShadow: const [
+                        BoxShadow(color: Colors.black12, blurRadius: 3),
+                      ],
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 7),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: project.status == ProjectStatus.active
+                          ? const Color(0xFFDDF7E5)
+                          : AppColors.border,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      project.status == ProjectStatus.active ? 'Active' : 'Archived',
+                      style: TextStyle(
+                        color: project.status == ProjectStatus.active
+                            ? const Color(0xFF137A36)
+                            : AppColors.textSecondary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

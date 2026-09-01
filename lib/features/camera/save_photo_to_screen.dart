@@ -68,6 +68,13 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
     await _repository.ensureLoaded(refreshPhotos: true);
     if (!mounted) return;
     setState(() => _loading = false);
+    final projectId = widget.initialProjectId;
+    final project = projectId == null ? null : _repository.findById(projectId);
+    if (project?.autoSaveCaptures == true) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_saving) _save();
+      });
+    }
   }
 
   void _refresh() {

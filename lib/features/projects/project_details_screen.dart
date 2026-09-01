@@ -13,6 +13,7 @@ import '../gallery/photo_details_screen.dart';
 import 'create_project_screen.dart';
 import 'project_data.dart';
 import 'project_export_service.dart';
+import 'project_map_panel.dart';
 
 class ProjectDetailsScreen extends StatefulWidget {
   const ProjectDetailsScreen({super.key, required this.projectId});
@@ -250,10 +251,7 @@ class _ProjectDetailsScreenState extends State<ProjectDetailsScreen> {
                           Expanded(
                             child: switch (_tabIndex) {
                               0 => _ProjectGallery(project: project, wide: wide),
-                              1 => const _LaterPanel(
-                                  icon: Icons.map_outlined,
-                                  title: 'Project map is coming next',
-                                ),
+                              1 => ProjectMapPanel(photos: project.photos),
                               _ => _DetailsPanel(project: project),
                             },
                           ),
@@ -530,25 +528,6 @@ class _GpsBadge extends StatelessWidget {
   }
 }
 
-class _LaterPanel extends StatelessWidget {
-  const _LaterPanel({required this.icon, required this.title});
-  final IconData icon;
-  final String title;
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 64, color: AppColors.primary),
-          const SizedBox(height: 10),
-          Text(title, style: AppTypography.h3),
-        ],
-      ),
-    );
-  }
-}
-
 class _DetailsPanel extends StatelessWidget {
   const _DetailsPanel({required this.project});
   final ProjectData project;
@@ -564,12 +543,36 @@ class _DetailsPanel extends StatelessWidget {
         MapEntry('Description',
             project.description.isEmpty ? 'No description' : project.description),
       ]
-          .map((entry) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(entry.key,
-                    style: AppTypography.caption
-                        .copyWith(color: AppColors.textSecondary)),
-                subtitle: Text(entry.value, style: AppTypography.bodyMedium),
+          .map((entry) => Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Text(entry.key,
+                          style: AppTypography.caption.copyWith(
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w600,
+                          )),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 3,
+                      child: Text(
+                        entry.value,
+                        textAlign: TextAlign.right,
+                        style: AppTypography.bodyMedium,
+                      ),
+                    ),
+                  ],
+                ),
               ))
           .toList(),
     );

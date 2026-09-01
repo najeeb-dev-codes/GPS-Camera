@@ -58,6 +58,39 @@ class ProjectExportService {
       ),
     );
 
+    for (var index = 0; index < project.photos.length; index++) {
+      final photo = project.photos[index];
+      final imageFile = File(photo.path);
+      if (!await imageFile.exists()) continue;
+      final image = pw.MemoryImage(await imageFile.readAsBytes());
+      document.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(28),
+          build: (_) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                '${project.name} • Photo ${index + 1} of ${project.photoCount}',
+                style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Expanded(
+                child: pw.Center(
+                  child: pw.Image(image, fit: pw.BoxFit.contain),
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text(photo.location),
+              pw.Text(photo.capturedAt.toLocal().toString()),
+              if (photo.stampData?.coordinates != null)
+                pw.Text(photo.stampData!.coordinates!),
+            ],
+          ),
+        ),
+      );
+    }
+
     final directory = await getTemporaryDirectory();
     final safeName = project.name.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
     final file = File(

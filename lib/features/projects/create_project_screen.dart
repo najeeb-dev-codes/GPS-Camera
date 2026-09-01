@@ -37,12 +37,11 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     Color(0xFF9E9E9E),
   ];
   static const List<String> _templates = <String>[
-    'Map Proof',
-    'Location Card',
-    'QR Split',
+    'Map',
+    'Default',
+    'QR',
     'Time & Place',
-    'Minimal Proof',
-    'Custom Style',
+    'Minimal',
   ];
 
   bool get _editing => widget.project != null;
@@ -59,7 +58,20 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     _color = project?.color ?? _colors.first;
     _useStampPreset = project?.useStampPreset ?? true;
     _autoSave = project?.autoSaveCaptures ?? false;
-    _template = project?.defaultStampTemplate ?? _templates.first;
+    final savedTemplate = project?.defaultStampTemplate;
+    _template = _normalizeTemplate(savedTemplate);
+  }
+
+  String _normalizeTemplate(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    if (normalized == 'location card') return 'Default';
+    if (normalized == 'qr split') return 'QR';
+    if (normalized == 'minimal proof') return 'Minimal';
+    if (normalized == 'map proof') return 'Map';
+    for (final template in _templates) {
+      if (template.toLowerCase() == normalized) return template;
+    }
+    return _templates.first;
   }
 
   @override
@@ -227,12 +239,13 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                             ),
                             DropdownButtonFormField<String>(
                               value: _template,
+                              disabledHint: Text(_template),
                               decoration: _decoration('Default Stamp Template'),
                               items: _templates
                                   .map((value) => DropdownMenuItem(
                                       value: value, child: Text(value)))
                                   .toList(),
-                              onChanged: (value) {
+                              onChanged: !_useStampPreset ? null : (value) {
                                 if (value != null) {
                                   setState(() => _template = value);
                                 }

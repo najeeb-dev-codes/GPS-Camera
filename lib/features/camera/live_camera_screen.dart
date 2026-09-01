@@ -16,6 +16,7 @@ import '../settings/photo_quality/models/photo_quality_settings.dart';
 import '../settings/photo_quality/services/photo_quality_camera_service.dart';
 import '../settings/photo_quality/services/photo_quality_settings_service.dart';
 import '../gallery/gallery_screen.dart';
+import '../projects/project_data.dart';
 import '../stamp_templates/stamp_templates_screen.dart';
 import 'capture_preview_screen.dart';
 import 'services/camera_exposure_service.dart';
@@ -135,10 +136,23 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     _settings.addListener(_onSettingsChanged);
     _photoQuality.addListener(_onPhotoQualityChanged);
 
-    _initializeCamera();
+    _loadProjectPresetAndInitialize();
     _loadRecentPhoto();
     _startLiveLocation();
     _startOrientationListener();
+  }
+
+  Future<void> _loadProjectPresetAndInitialize() async {
+    final projectId = widget.initialProjectId;
+    if (projectId != null) {
+      await ProjectRepository.instance.ensureLoaded();
+      final project = ProjectRepository.instance.findById(projectId);
+      if (project?.useStampPreset == true) {
+        _selectedTemplateIndex = project!.stampTemplateIndex;
+      }
+    }
+    if (!mounted) return;
+    await _initializeCamera();
   }
 
 

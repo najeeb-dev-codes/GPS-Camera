@@ -445,10 +445,19 @@ class _AppTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final iconSize = compact ? 20.0 : 28.0;
+    final horizontalPadding = compact ? 4.0 : 7.0;
+    final verticalPadding = compact ? 3.0 : 5.0;
+    final labelSize = compact ? 8.0 : 11.0;
+
     return Container(
+      constraints: BoxConstraints(
+        // Minimal has no icon, but its tag keeps the shared tag height.
+        minHeight: iconSize + (verticalPadding * 2),
+      ),
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 3 : 5,
-        vertical: compact ? 2 : 3,
+        horizontal: horizontalPadding,
+        vertical: verticalPadding,
       ),
       decoration: BoxDecoration(
         color: dark
@@ -467,23 +476,22 @@ class _AppTag extends StatelessWidget {
           if (showIcon) ...[
             Image.asset(
               'assets/icon/app_icon.png',
-              width: compact ? 9 : 14,
-              height: compact ? 9 : 14,
-              color: dark ? AppColors.white : null,
-              colorBlendMode: dark ? BlendMode.srcIn : null,
+              width: iconSize,
+              height: iconSize,
+              fit: BoxFit.contain,
               errorBuilder: (_, __, ___) => Icon(
                 Icons.camera_alt_rounded,
-                size: compact ? 9 : 14,
+                size: iconSize,
                 color: dark ? AppColors.white : AppColors.primary,
               ),
             ),
-            SizedBox(width: compact ? 2 : 4),
+            SizedBox(width: compact ? 4 : 6),
           ],
           Text(
             'GPS Camera',
             style: AppTypography.tiny.copyWith(
               color: dark ? AppColors.white : AppColors.primary,
-        fontSize: compact ? 6 : 8,
+              fontSize: labelSize,
               fontWeight: FontWeight.w700,
             ),
           ),
