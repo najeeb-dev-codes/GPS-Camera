@@ -6,6 +6,7 @@
 class DeviceRegistrationPayload {
   const DeviceRegistrationPayload({
     required this.installationId,
+    this.packageName,
     this.firebaseInstallationId,
     this.hardwareId,
     this.fcmToken,
@@ -34,6 +35,7 @@ class DeviceRegistrationPayload {
   });
 
   final String installationId;
+  final String? packageName;
   final String? firebaseInstallationId;
   final String? hardwareId;
   final String? fcmToken;
@@ -63,6 +65,7 @@ class DeviceRegistrationPayload {
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'installation_id': installationId,
+      'package_name': packageName,
       'firebase_installation_id': firebaseInstallationId,
       'hardware_id': hardwareId,
       'fcm_token': fcmToken,

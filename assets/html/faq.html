@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="color-scheme" content="light">
+  <title>GPS Mark FAQ</title>
+  <style>
+    :root {
+      --app-color: #6750a4;
+      --app-color-dark: #493278;
+      --page: #ffffff;
+      --surface: #ffffff;
+      --text: #17152b;
+      --muted: #5f5d6b;
+      --border: #e7e4ec;
+      --pressed: #f6f3fb;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--page);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .page {
+      width: min(100%, 760px);
+      margin: 0 auto;
+      padding: 14px 16px 28px;
+    }
+
+    .faq-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .faq-item {
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 1px 2px rgba(24, 20, 40, 0.04);
+    }
+
+    .faq-question {
+      width: 100%;
+      min-height: 64px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 24px;
+      align-items: center;
+      gap: 12px;
+      padding: 15px 14px 15px 16px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .faq-question:active {
+      background: var(--pressed);
+    }
+
+    .faq-question:focus-visible {
+      outline: 2px solid var(--app-color);
+      outline-offset: -2px;
+    }
+
+    .faq-question span:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .chevron {
+      width: 11px;
+      height: 11px;
+      justify-self: center;
+      border-top: 2px solid var(--app-color-dark);
+      border-right: 2px solid var(--app-color-dark);
+      transform: rotate(135deg);
+      transition: transform 180ms ease;
+    }
+
+    .faq-question[aria-expanded="true"] .chevron {
+      transform: rotate(-45deg);
+    }
+
+    .faq-answer {
+      margin: 0;
+      padding: 0 16px 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+      font-weight: 500;
+      overflow-wrap: anywhere;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    @media (min-width: 600px) {
+      .page {
+        padding: 22px 32px 40px;
+      }
+
+      .faq-list {
+        gap: 12px;
+      }
+
+      .faq-question {
+        min-height: 70px;
+        padding: 17px 20px;
+      }
+
+      .faq-answer {
+        padding: 16px 20px 20px;
+      }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .faq-question {
+        transition: background-color 120ms ease;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section id="listView" class="faq-list" aria-label="Frequently asked questions"></section>
+  </main>
+
+  <script>
+    const faqs = [
+      {
+        question: 'What is the GPS Mark app?',
+        answer: 'GPS Mark lets you capture photos with location details. It can add the address, coordinates, date, time, altitude, compass and map information directly to your photos.'
+      },
+      {
+        question: 'Why does GPS Mark need permissions?',
+        answer: 'Camera permission is required to capture photos. Precise Location creates accurate stamps, while Photos and Media permission allows the app to save and display your captured images.'
+      },
+      {
+        question: 'Why is internet required to open the camera?',
+        answer: 'Internet is required to retrieve updated address and map information for the location stamp. If there is no connection, you can turn on the internet or cancel and leave the camera.'
+      },
+      {
+        question: 'How do I capture a photo with a GPS stamp?',
+        answer: 'Open the Camera screen and wait for your location information to appear. Select a stamp template, position the camera and tap the shutter button to capture the photo.'
+      },
+      {
+        question: 'What information can be displayed in a stamp?',
+        answer: 'A stamp can show the address, latitude, longitude, date, time, altitude, compass and map. The available information depends on the selected template and customization settings.'
+      },
+      {
+        question: 'How do I select a different stamp template?',
+        answer: 'Tap the Templates icon on the Camera screen. Choose Map, Address, QR, Time & Place or Minimal, and then tap Apply Template to use it.'
+      },
+      {
+        question: 'Can I customize the appearance of a stamp?',
+        answer: 'Yes. You can control the displayed information and adjust the stamp’s height, width and opacity. Tap Save Style to keep the changes or Reset to restore the defaults.'
+      },
+      {
+        question: 'What is the Signature panel?',
+        answer: 'The Signature panel adds a small custom signature label to the captured photo. You can enable or disable it from the capture preview before saving the image.'
+      },
+      {
+        question: 'Can I save a photo without the GPS stamp?',
+        answer: 'Yes. Enable Save Original Photo in Settings to keep the original image without the stamp. The stamped version will still be saved separately.'
+      },
+      {
+        question: 'Where are my captured photos saved?',
+        answer: 'Regular photos are stored in Pictures/GPS Mark. Photos saved to a project are stored in Pictures/GPS Mark/ProjectName and also appear inside the app gallery.'
+      },
+      {
+        question: 'How do I save a photo to a project?',
+        answer: 'After capturing the photo, tap Save Photo and select Project as the destination. Choose an existing project or create a new project, then tap Save Here.'
+      },
+      {
+        question: 'How do I create and manage a project?',
+        answer: 'Open Projects and tap New Project. Add a project name, location, description, colour and optional cover image to organize related photos in one place.'
+      },
+      {
+        question: 'Where can I view my captured photos?',
+        answer: 'Open Gallery to view photos grouped by their captured date. Tap a date card to see its images, or tap a single-image date to open that photo directly.'
+      },
+      {
+        question: 'How do I select multiple photos?',
+        answer: 'Long-press a photo to start multi-selection. Tap other photos to include them, then use the available actions to share, delete, move or manage the selected images.'
+      },
+      {
+        question: 'How do I add a photo to Favorites?',
+        answer: 'Open the photo or select it from the Gallery options, then tap Add to Favorites. You can use the Favorites filter to display only your favorite photos.'
+      },
+      {
+        question: 'Can I move a photo to another project?',
+        answer: 'Yes. Select the required photo, open the three-dot menu and choose Move to Project. Select the destination project to organize the photo under that project.'
+      },
+      {
+        question: 'Can I zoom and inspect a captured photo?',
+        answer: 'Yes. Open the Photo Details screen and use two fingers to zoom in or out. You can move around the enlarged image to inspect its stamp and photo details.'
+      },
+      {
+        question: 'How do I export project photos as a PDF?',
+        answer: 'Open Project Details and tap Export. The app creates a PDF containing the project information, cover image and selected project photos for sharing or documentation.'
+      },
+      {
+        question: 'Which camera and photo settings can I change?',
+        answer: 'You can change the default camera, aspect ratio, grid, timer, focus, mirror selfie, shutter sound and volume-key action. Photo quality and file-name options are also available.'
+      },
+      {
+        question: 'How do notifications, themes and advertisements work?',
+        answer: 'Notifications provide app updates and saved-photo information when enabled. You can select Light, Dark or System theme, while advertisements automatically stay hidden without internet.'
+      }
+    ];
+
+    const listView = document.getElementById('listView');
+    function renderList() {
+      const fragment = document.createDocumentFragment();
+
+      faqs.forEach((faq, index) => {
+        const item = document.createElement('article');
+        item.className = 'faq-item';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'faq-question';
+        button.id = `faq-question-${index}`;
+        button.setAttribute('aria-expanded', 'false');
+        button.setAttribute('aria-controls', `faq-answer-${index}`);
+
+        const label = document.createElement('span');
+        label.textContent = faq.question;
+
+        const chevron = document.createElement('span');
+        chevron.className = 'chevron';
+        chevron.setAttribute('aria-hidden', 'true');
+
+        const answer = document.createElement('p');
+        answer.className = 'faq-answer';
+        answer.id = `faq-answer-${index}`;
+        answer.setAttribute('role', 'region');
+        answer.setAttribute('aria-labelledby', button.id);
+        answer.textContent = faq.answer;
+        answer.hidden = true;
+
+        button.addEventListener('click', () => toggleFaq(button, answer));
+        button.append(label, chevron);
+        item.append(button, answer);
+        fragment.appendChild(item);
+      });
+
+      listView.replaceChildren(fragment);
+    }
+
+    function toggleFaq(selectedButton, selectedAnswer) {
+      const willOpen = selectedButton.getAttribute('aria-expanded') !== 'true';
+
+      document.querySelectorAll('.faq-question[aria-expanded="true"]')
+        .forEach((button) => {
+          button.setAttribute('aria-expanded', 'false');
+          const answer = document.getElementById(button.getAttribute('aria-controls'));
+          if (answer) answer.hidden = true;
+        });
+
+      if (willOpen) {
+        selectedButton.setAttribute('aria-expanded', 'true');
+        selectedAnswer.hidden = false;
+        selectedButton.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    renderList();
+  </script>
+</body>
+</html>

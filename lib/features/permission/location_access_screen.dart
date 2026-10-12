@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/services/device_registration_service.dart';
 import '../../core/services/permission_flow_service.dart';
@@ -9,14 +8,20 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
+import 'permission_ad_gate.dart';
+import 'permission_recovery_dialog.dart';
 
 class LocationAccessScreen extends StatefulWidget {
   const LocationAccessScreen({
     super.key,
+    this.requestOnOpen = false,
+    this.onAutomaticFinished,
     this.onLocationGranted,
     this.onLocationSkipped,
   });
 
+  final bool requestOnOpen;
+  final VoidCallback? onAutomaticFinished;
   /// Called when precise location permission has been granted.
   ///
   /// The permission flow can connect this to
@@ -31,6 +36,23 @@ class LocationAccessScreen extends StatefulWidget {
 
 class _LocationAccessScreenState extends State<LocationAccessScreen> {
   bool _isRequesting = false;
+  bool _automaticRequestFinished = false;
+
+  void _finishAutomaticRequest() {
+    if (!widget.requestOnOpen ||
+        !mounted ||
+        _automaticRequestFinished) {
+      return;
+    }
+
+    _automaticRequestFinished = true;
+    final onFinished = widget.onAutomaticFinished;
+    if (onFinished != null) {
+      onFinished();
+      return;
+    }
+    Navigator.of(context).pop();
+  }
 
   // ---------------------------------------------------------------------------
   // LOCATION PERMISSION
@@ -44,70 +66,42 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
     });
 
     try {
-      final currentStatus = await Permission.locationWhenInUse.status;
-
-      // -----------------------------------------------------------------------
-      // Already granted
-      // -----------------------------------------------------------------------
-
-      if (currentStatus.isGranted) {
+      if (await PermissionFlowService.isLocationGranted()) {
         _locationPermissionGranted();
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // Request location while app is being used.
-      //
-      // Android will show its own location permission dialog.
-      // -----------------------------------------------------------------------
+      final needsWarning =
+          await PermissionFlowService.shouldShowRequestWarning(
+        ManagedAppPermission.location,
+      );
+      if (needsWarning && mounted) {
+        await PermissionRecoveryDialog.showRepeatDenialToast(
+          context,
+          const [ManagedAppPermission.location],
+        );
+      }
 
-      final result =
-          await Permission.locationWhenInUse.request();
+      final granted = await PermissionFlowService.requestPermission(
+        ManagedAppPermission.location,
+      );
 
       if (!mounted) return;
 
-      // -----------------------------------------------------------------------
-      // Granted
-      // -----------------------------------------------------------------------
-
-      if (result.isGranted) {
-        // Check whether Android granted precise or approximate location.
-        final locationServiceStatus =
-            await Permission.locationWhenInUse.status;
-
-        if (locationServiceStatus.isGranted) {
-          _locationPermissionGranted();
-        } else {
-          setState(() {
-            _isRequesting = false;
-          });
-        }
-
+      if (granted) {
+        _locationPermissionGranted();
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // Permanently denied
-      // -----------------------------------------------------------------------
-
-      if (result.isPermanentlyDenied) {
-        await _showPermissionSettingsDialog();
-        return;
-      }
-
-      // -----------------------------------------------------------------------
-      // Denied
-      // -----------------------------------------------------------------------
-
-      setState(() {
-        _isRequesting = false;
-      });
+      if (mounted) setState(() => _isRequesting = false);
+      _finishAutomaticRequest();
     } catch (_) {
       if (!mounted) return;
 
       setState(() {
         _isRequesting = false;
       });
+      _finishAutomaticRequest();
     }
   }
 
@@ -121,6 +115,11 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
     setState(() {
       _isRequesting = false;
     });
+
+    if (widget.requestOnOpen) {
+      _finishAutomaticRequest();
+      return;
+    }
 
     // Location is now granted. Immediately request a fresh backend
     // registration so the payload can include the location fields the
@@ -139,49 +138,6 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
     await PermissionFlowService.advance(
       context,
       from: PermissionStep.location,
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // SETTINGS DIALOG
-  // ---------------------------------------------------------------------------
-
-  Future<void> _showPermissionSettingsDialog() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isRequesting = false;
-    });
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text(
-            'Location permission required',
-          ),
-          content: const Text(
-            'Location permission has been disabled for '
-            'GeoStamp Camera. In Settings, select Permissions '
-            'and allow location access.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await openAppSettings();
-              },
-              child: const Text('Manage App Permissions'),
-            ),
-          ],
-        );
-      },
     );
   }
 
@@ -208,11 +164,12 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
 
       appBar: AppTopBar(
         title: '',
-        onBack: _skipForNow,
+        showBack: !widget.requestOnOpen,
+        onBack: () => Navigator.of(context).pop(),
       ),
 
       body: SafeArea(
@@ -243,6 +200,14 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                     ),
                     child: Column(
                       children: [
+                        if (widget.requestOnOpen) ...[
+                          PermissionAdGate(
+                            onReady: () {
+                              _allowLocation();
+                            },
+                          ),
+                          const SizedBox(height: 20),
+                        ],
                         // -----------------------------------------------------
                         // LOCATION ICON
                         // -----------------------------------------------------
@@ -251,7 +216,7 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                           width: width >= 600 ? 92 : 78,
                           height: width >= 600 ? 92 : 78,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF0E7FF),
+                            color: AppColors.primarySurface,
                             borderRadius: BorderRadius.circular(24),
                           ),
                           alignment: Alignment.center,
@@ -288,8 +253,8 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                             maxWidth: 340,
                           ),
                           child: Text(
-                            'Use GPS to add address, coordinates, '
-                            'date, and weather to your photo.',
+                            'Location permission adds accurate GPS and '
+                            'address details to your photo stamp.',
                             textAlign: TextAlign.center,
                             style: AppTypography.body.copyWith(
                               color: AppColors.textSecondary,
@@ -356,7 +321,7 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                                     vertical: 9,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: AppColors.white,
+                                    color: AppColors.surface,
                                     borderRadius:
                                         BorderRadius.circular(10),
                                     boxShadow: [
@@ -398,7 +363,7 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        '± 16 m  •  18 Aug 2025  •  09:25 AM',
+                                        '18 Aug 2025  •  09:25 AM',
                                         style:
                                             AppTypography.caption
                                                 .copyWith(
@@ -417,6 +382,28 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
 
                         const SizedBox(height: 16),
 
+                        _buildLocationCard(
+                          icon: Icons.gps_fixed_rounded,
+                          title: 'Latitude & longitude',
+                          description:
+                              'Adds accurate GPS coordinates to your stamp.',
+                        ),
+                        const SizedBox(height: 10),
+                        _buildLocationCard(
+                          icon: Icons.location_on_outlined,
+                          title: 'Street, city & country',
+                          description:
+                              'Shows the readable address of your capture.',
+                        ),
+                        const SizedBox(height: 10),
+                        _buildLocationCard(
+                          icon: Icons.map_outlined,
+                          title: 'Project location map',
+                          description:
+                              'Displays captured locations inside a project.',
+                        ),
+                        const SizedBox(height: 10),
+
                         // -----------------------------------------------------
                         // PRIVACY / LOCATION INFORMATION
                         // -----------------------------------------------------
@@ -428,7 +415,7 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                             vertical: 13,
                           ),
                           decoration: BoxDecoration(
-                            color: AppColors.white,
+                            color: AppColors.surface,
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
                               color: AppColors.border,
@@ -447,7 +434,8 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                               Expanded(
                                 child: Text(
                                   'Location is requested only while '
-                                  'you use the camera.',
+                                  'you capture. It is never tracked in '
+                                  'the background.',
                                   style: AppTypography.caption.copyWith(
                                     color: AppColors.textSecondary,
                                     height: 1.35,
@@ -457,50 +445,133 @@ class _LocationAccessScreenState extends State<LocationAccessScreen> {
                             ],
                           ),
                         ),
+                        const SizedBox(height: 14),
+                        _buildLocationPoints(),
+                        if (!widget.requestOnOpen) ...[
+                          const SizedBox(height: 20),
+                          const AdBannerWidget(
+                            format: AdDisplayFormat.mediumRectangle,
+                            reserveSpaceWhileLoading: true,
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ),
 
-                // -------------------------------------------------------------
-                // BOTTOM ACTIONS
-                // -------------------------------------------------------------
-
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    16,
-                  ),
-                  child: Column(
-                    children: [
-                      AppPrimaryButton(
-                        label: 'Allow Location',
-                        isLoading: _isRequesting,
-                        onPressed: _allowLocation,
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      TextButton(
-                        onPressed:
-                            _isRequesting ? null : _skipForNow,
-                        child: Text(
-                          'Skip for Now',
-                          style: AppTypography.bodyMedium.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             );
           },
         ),
+      ),
+    );
+  }
+
+  Widget _buildLocationCard({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.primarySurface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, size: 22, color: AppColors.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: AppTypography.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocationPoints() {
+    const points = [
+      'Your current address is refreshed when the camera opens.',
+      'Coordinates are stored only with the photo you capture.',
+      'Captured locations can be viewed on the project map.',
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.primarySurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.primaryLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'How location is used',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final point in points) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Icon(
+                    Icons.circle,
+                    size: 6,
+                    color: AppColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    point,
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.textSecondary,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (point != points.last) const SizedBox(height: 6),
+          ],
+        ],
       ),
     );
   }

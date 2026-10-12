@@ -44,7 +44,7 @@ class AppSlider extends StatelessWidget {
         SliderTheme(
           data: SliderTheme.of(context).copyWith(
             activeTrackColor: AppColors.primary,
-            inactiveTrackColor: AppColors.neutral200,
+            inactiveTrackColor: AppColors.inactiveSurface,
             thumbColor: AppColors.primary,
             overlayColor: AppColors.primary.withValues(alpha: 0.15),
             trackHeight: 3,

@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:gps_mark/features/permission/permission_screen.dart';
 
 import '../../core/services/device_registration_service.dart';
 import '../../core/services/permission_flow_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
-import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 import '../home/home_screen.dart';
-import 'permission_screen.dart';
+import 'permission_page_route.dart';
 
 class PermissionsEnabledScreen extends StatefulWidget {
   const PermissionsEnabledScreen({super.key});
@@ -26,6 +26,7 @@ class _PermissionsEnabledScreenState
   bool _location = false;
   bool _photos = false;
   bool _notifications = false;
+  bool _navigating = false;
 
   @override
   void initState() {
@@ -39,7 +40,12 @@ class _PermissionsEnabledScreenState
   Future<void> _initialize() async {
     await PermissionFlowService.markOnboardingCompleted();
 
-    await _refresh();
+    final requiredGranted = await _refresh();
+
+    if (!requiredGranted) {
+      _showRequiredScreen();
+      return;
+    }
 
     // Important:
     // Permissions have now finished being granted/denied.
@@ -50,7 +56,6 @@ class _PermissionsEnabledScreenState
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-
     super.dispose();
   }
 
@@ -64,12 +69,17 @@ class _PermissionsEnabledScreenState
   }
 
   Future<void> _refreshAndSync() async {
-    await _refresh();
+    final requiredGranted = await _refresh();
+
+    if (!requiredGranted) {
+      _showRequiredScreen();
+      return;
+    }
 
     await DeviceRegistrationService.registerAfterPermissionsChanged();
   }
 
-  Future<void> _refresh() async {
+  Future<bool> _refresh() async {
     final camera =
         await PermissionFlowService.isCameraGranted();
 
@@ -82,7 +92,7 @@ class _PermissionsEnabledScreenState
     final notifications =
         await PermissionFlowService.isNotificationGranted();
 
-    if (!mounted) return;
+    if (!mounted) return false;
 
     setState(() {
       _camera = camera;
@@ -91,27 +101,30 @@ class _PermissionsEnabledScreenState
       _notifications = notifications;
       _loading = false;
     });
+
+    return camera && location && photos;
   }
 
   void _continueToHome() {
+    if (_navigating || !_camera || !_location || !_photos) return;
+    _navigating = true;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
+      MaterialPageRoute<void>(
         builder: (_) => const HomeScreen(),
       ),
       (route) => false,
     );
   }
 
-  Future<void> _managePermissions() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const PermissionScreen(),
+  void _showRequiredScreen() {
+    if (_navigating || !mounted) return;
+    _navigating = true;
+    Navigator.of(context).pushAndRemoveUntil(
+      buildPermissionPageRoute<void>(
+        const PermissionScreen(showOnlyMissing: true),
       ),
+      (route) => false,
     );
-
-    if (!mounted) return;
-
-    await _refreshAndSync();
   }
 
   Widget _permissionCard({
@@ -132,11 +145,13 @@ class _PermissionsEnabledScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
             final horizontalPadding =
                 constraints.maxWidth >= 600
                     ? 48.0
@@ -157,27 +172,30 @@ class _PermissionsEnabledScreenState
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.only(
-                        top: 24,
+                        top: 16,
                         bottom: 20,
                       ),
                       children: [
+                        // Same full-width banner used on the Home screen,
+                        // shown at the top of this screen.
+                        const SizedBox(
+                          width: double.infinity,
+                          child: AdBannerWidget(
+                            format: AdDisplayFormat.adaptiveBanner,
+                            reserveSpaceWhileLoading: true,
+                            slotHeight: 80,
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+
                         const SuccessStateView(
-                          title: "You're ready to capture",
+                          title: "Permissions restored",
                           subtitle:
                               'All required permissions are enabled.',
                         ),
 
                         const SizedBox(height: 24),
-
-                        _permissionCard(
-                          icon: Icons.camera_alt_outlined,
-                          title: 'Camera',
-                          subtitle:
-                              'Capture geotagged photos',
-                          granted: _camera,
-                        ),
-
-                        const SizedBox(height: 8),
 
                         _permissionCard(
                           icon: Icons.location_on_outlined,
@@ -230,28 +248,14 @@ class _PermissionsEnabledScreenState
                           label: 'Continue to Home',
                           onPressed: _continueToHome,
                         ),
-
-                        const SizedBox(height: 8),
-
-                        TextButton(
-                          onPressed: _managePermissions,
-                          child: Text(
-                            'Manage Permissions',
-                            style:
-                                AppTypography.bodyMedium.copyWith(
-                              color: AppColors.primary,
-                              fontWeight:
-                                  FontWeight.w600,
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
                 ],
               ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

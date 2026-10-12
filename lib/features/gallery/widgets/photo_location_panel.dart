@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:gps_mark/features/gallery/widgets/interactive_location_map.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
-import '../../../core/theme/app_typography.dart';
 import '../../../shared/widgets/widgets.dart';
-import 'interactive_location_map.dart';
 
 class PhotoLocationPanel extends StatelessWidget {
   const PhotoLocationPanel({
@@ -18,79 +17,87 @@ class PhotoLocationPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final secondaryLocation = <String?>[
-      stampData.postalCode,
-      stampData.country,
-    ].whereType<String>().where((value) => value.trim().isNotEmpty).join(', ');
-
-    return Column(
-      key: const ValueKey<String>('location-panel'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: const AppTopBar(title: 'Open in Maps'),
+      body: SafeArea(
+        top: false,
+        child: Column(
           children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.10),
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.location_on_outlined,
-                size: 19,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    location,
-                    style: AppTypography.bodyMedium.copyWith(
-                      fontWeight: FontWeight.w700,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.screenPadding,
+                  AppSpacing.md,
+                  AppSpacing.screenPadding,
+                  AppSpacing.sm,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.10),
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child:  Icon(
+                            Icons.location_on_outlined,
+                            size: 20,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Text(
+                            location,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  if (secondaryLocation.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      secondaryLocation,
-                      style: AppTypography.caption.copyWith(
-                        color: AppColors.textSecondary,
+                    const SizedBox(height: AppSpacing.md),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        child: InteractiveLocationMap(
+                          latitude: stampData.latitude,
+                          longitude: stampData.longitude,
+                          initialZoom: 16,
+                        ),
                       ),
                     ),
+                    const SizedBox(height: AppSpacing.sm),
+                    CoordinateInfoRow(
+                      label: 'Coordinates',
+                      value: stampData.coordinates ??
+                          _formatCoordinates(
+                            stampData.latitude,
+                            stampData.longitude,
+                          ),
+                    ),
                   ],
-                ],
+                ),
               ),
             ),
+            const AdBannerWidget(
+              format: AdDisplayFormat.largeBanner,
+              reserveSpaceWhileLoading: true,
+              slotHeight: 100,
+            ),
+            const SizedBox(height: AppSpacing.sm),
           ],
         ),
-        const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          child: SizedBox(
-            width: double.infinity,
-            height: 180,
-            child: InteractiveLocationMap(
-              latitude: stampData.latitude,
-              longitude: stampData.longitude,
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        CoordinateInfoRow(
-          label: 'Coordinates',
-          value: stampData.coordinates ??
-              _formatCoordinates(
-                stampData.latitude,
-                stampData.longitude,
-              ),
-        ),
-      ],
+      ),
     );
   }
 

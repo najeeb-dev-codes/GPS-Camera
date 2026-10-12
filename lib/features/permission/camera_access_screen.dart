@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/constants/app_brand.dart';
 import '../../core/services/permission_flow_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
+import 'permission_ad_gate.dart';
+import 'permission_recovery_dialog.dart';
 
 class CameraAccessScreen extends StatefulWidget {
   const CameraAccessScreen({
     super.key,
+    this.requestOnOpen = false,
+    this.onAutomaticFinished,
     this.onCameraGranted,
     this.onCameraSkipped,
   });
 
+  final bool requestOnOpen;
+  final VoidCallback? onAutomaticFinished;
   /// Called after the camera permission has been successfully granted.
   ///
   /// The permission flow can connect this to LocationAccessScreen later.
@@ -26,6 +32,23 @@ class CameraAccessScreen extends StatefulWidget {
 
 class _CameraAccessScreenState extends State<CameraAccessScreen> {
   bool _isRequesting = false;
+  bool _automaticRequestFinished = false;
+
+  void _finishAutomaticRequest() {
+    if (!widget.requestOnOpen ||
+        !mounted ||
+        _automaticRequestFinished) {
+      return;
+    }
+
+    _automaticRequestFinished = true;
+    final onFinished = widget.onAutomaticFinished;
+    if (onFinished != null) {
+      onFinished();
+      return;
+    }
+    Navigator.of(context).pop();
+  }
 
   // ---------------------------------------------------------------------------
   // CAMERA PERMISSION
@@ -39,77 +62,44 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
     });
 
     try {
-      final currentStatus = await Permission.camera.status;
-
-      // -----------------------------------------------------------------------
-      // Already granted
-      // -----------------------------------------------------------------------
-
-      if (currentStatus.isGranted) {
+      if (await PermissionFlowService.isCameraGranted()) {
         _cameraPermissionGranted();
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // Request Android camera permission
-      // -----------------------------------------------------------------------
+      final needsWarning =
+          await PermissionFlowService.shouldShowRequestWarning(
+        ManagedAppPermission.camera,
+      );
+      if (needsWarning && mounted) {
+        await PermissionRecoveryDialog.showRepeatDenialToast(
+          context,
+          const [ManagedAppPermission.camera],
+        );
+      }
 
-      final result = await Permission.camera.request();
+      final granted = await PermissionFlowService.requestPermission(
+        ManagedAppPermission.camera,
+      );
 
       if (!mounted) return;
 
-      if (result.isGranted) {
+      if (granted) {
         _cameraPermissionGranted();
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // Permanently denied
-      // -----------------------------------------------------------------------
-
-      if (result.isPermanentlyDenied) {
-        await _showPermissionSettingsDialog();
-        return;
-      }
-
-      // -----------------------------------------------------------------------
-      // Denied / restricted
-      // -----------------------------------------------------------------------
-
-      setState(() {
-        _isRequesting = false;
-      });
+      if (mounted) setState(() => _isRequesting = false);
+      _finishAutomaticRequest();
     } catch (_) {
       if (!mounted) return;
 
       setState(() {
         _isRequesting = false;
       });
+      _finishAutomaticRequest();
     }
   }
-
-  // void _cameraPermissionGranted() {
-  //   if (!mounted) return;
-
-  //   setState(() {
-  //     _isRequesting = false;
-  //   });
-
-  //   if (widget.onCameraGranted != null) {
-  //     widget.onCameraGranted!();
-  //     return;
-  //   }
-
-  //   // The next permission screen will be connected here.
-  //   //
-  //   // Example:
-  //   //
-  //   // Navigator.of(context).push(
-  //   //   MaterialPageRoute(
-  //   //     builder: (_) => const LocationAccessScreen(),
-  //   //   ),
-  //   // );
-  // }
 
   Future<void> _cameraPermissionGranted() async {
     if (!mounted) return;
@@ -118,57 +108,17 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
       _isRequesting = false;
     });
 
+    if (widget.requestOnOpen) {
+      _finishAutomaticRequest();
+      return;
+    }
+
     if (widget.onCameraGranted != null) {
       widget.onCameraGranted!();
       return;
     }
 
     await PermissionFlowService.advance(context, from: PermissionStep.camera);
-  }
-
-
-
-
-
-
-  // ---------------------------------------------------------------------------
-  // PERMISSION SETTINGS
-  // ---------------------------------------------------------------------------
-
-  Future<void> _showPermissionSettingsDialog() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isRequesting = false;
-    });
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Camera permission required'),
-          content: const Text(
-            'Camera permission has been disabled for GeoStamp Camera. '
-            'In Settings, select Permissions and allow camera access.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await openAppSettings();
-              },
-              child: const Text('Manage App Permissions'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -194,11 +144,12 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
 
       appBar: AppTopBar(
         title: '',
-        onBack: _notNow,
+        showBack: !widget.requestOnOpen,
+        onBack: () => Navigator.of(context).pop(),
       ),
 
       body: SafeArea(
@@ -229,6 +180,14 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
                     ),
                     child: Column(
                       children: [
+                        if (widget.requestOnOpen) ...[
+                          PermissionAdGate(
+                            onReady: () {
+                              _allowCamera();
+                            },
+                          ),
+                          const SizedBox(height: 20),
+                        ],
                         // -----------------------------------------------------
                         // CAMERA ICON
                         // -----------------------------------------------------
@@ -237,7 +196,7 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
                           width: width >= 600 ? 92 : 78,
                           height: width >= 600 ? 92 : 78,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF0E7FF),
+                            color: AppColors.primarySurface,
                             borderRadius: BorderRadius.circular(24),
                           ),
                           alignment: Alignment.center,
@@ -274,7 +233,7 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
                             maxWidth: 340,
                           ),
                           child: Text(
-                            'GeoStamp Camera needs camera access '
+                            '${AppBrand.name} needs camera access '
                             'to capture photos with GPS stamps.',
                             textAlign: TextAlign.center,
                             style: AppTypography.body.copyWith(
@@ -303,42 +262,20 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
-                              // Background scene approximation using
-                              // existing Flutter primitives.
-                              Container(
-                                decoration: const BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Color(0xFF9CB5C8),
-                                      Color(0xFF6F8590),
-                                      Color(0xFF70513B),
-                                    ],
-                                    stops: [
-                                      0.0,
-                                      0.48,
-                                      1.0,
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                              // Building / camera preview composition.
-                              Positioned(
-                                left: 12,
-                                right: 12,
-                                bottom: 20,
-                                child: Container(
-                                  height: previewHeight * 0.40,
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF745B49),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: CustomPaint(
-                                    painter: _BuildingPreviewPainter(),
-                                  ),
-                                ),
+                              Image.asset(
+                                'assets/images/stampbg.png',
+                                fit: BoxFit.cover,
+                                alignment: Alignment.center,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: AppColors.mutedSurface,
+                                    alignment: Alignment.center,
+                                    child: Icon(
+                                      Icons.image_not_supported_outlined,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  );
+                                },
                               ),
 
                               // GPS stamp overlay.
@@ -347,46 +284,47 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
                                 right: 12,
                                 bottom: 8,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
+                                  padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
                                     color: Colors.black.withValues(
-                                      alpha: 0.65,
+                                      alpha: 0.78,
                                     ),
-                                    borderRadius: BorderRadius.circular(6),
+                                    borderRadius: BorderRadius.circular(10),
                                   ),
-                                  child: const Text(
-                                    'Tirunelveli, Tamil Nadu, India\n'
-                                    '8.7278° N, 77.7017° E\n'
-                                    '±16 m  ·  28°C  ·  1021 hPa',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      height: 1.3,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ),
-                              ),
-
-                              // Location marker.
-                              Positioned(
-                                left: 14,
-                                bottom: 34,
-                                child: Container(
-                                  width: 34,
-                                  height: 34,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Icon(
-                                    Icons.location_on,
-                                    size: 22,
-                                    color: AppColors.primary,
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(9),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Icon(
+                                          Icons.location_on_rounded,
+                                          size: 25,
+                                          color: AppColors.primary,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      const Expanded(
+                                        child: Text(
+                                          'Tirunelveli, Tamil Nadu, India\n'
+                                          '8.7278° N, 77.7017° E\n'
+                                          '18 Aug 2025  ·  09:25 AM',
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9.5,
+                                            height: 1.25,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -416,47 +354,28 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
 
                         _buildFeaturePoint(
                           icon: Icons.check_circle,
-                          text: 'Scan QR codes',
+                          text: 'Add GPS stamps',
                         ),
+
+                        const SizedBox(height: 20),
+
+                        // -----------------------------------------------------
+                        // CAMERA ACCESS USAGE
+                        // -----------------------------------------------------
+
+                        _buildCameraUsageSection(),
+                        if (!widget.requestOnOpen) ...[
+                          const SizedBox(height: 20),
+                          const AdBannerWidget(
+                            format: AdDisplayFormat.mediumRectangle,
+                            reserveSpaceWhileLoading: true,
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ),
 
-                // -------------------------------------------------------------
-                // BOTTOM ACTIONS
-                // -------------------------------------------------------------
-
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    16,
-                  ),
-                  child: Column(
-                    children: [
-                      AppPrimaryButton(
-                        label: 'Allow Camera',
-                        isLoading: _isRequesting,
-                        onPressed: _allowCamera,
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      TextButton(
-                        onPressed: _isRequesting ? null : _notNow,
-                        child: Text(
-                          'Not Now',
-                          style: AppTypography.bodyMedium.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             );
           },
@@ -493,115 +412,72 @@ class _CameraAccessScreenState extends State<CameraAccessScreen> {
       ],
     );
   }
-}
 
-// =============================================================================
-// PREVIEW PAINTER
-// =============================================================================
-//
-// This is not a reusable widget. It is only the visual painting implementation
-// used inside this screen so we don't introduce another common widget.
-// =============================================================================
-
-class _BuildingPreviewPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final buildingPaint = Paint()
-      ..color = const Color(0xFF8E806E)
-      ..style = PaintingStyle.fill;
-
-    final darkPaint = Paint()
-      ..color = const Color(0xFF4F453D)
-      ..style = PaintingStyle.fill;
-
-    final cranePaint = Paint()
-      ..color = const Color(0xFF343434)
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
-
-    final building = Rect.fromLTWH(
-      size.width * 0.12,
-      size.height * 0.10,
-      size.width * 0.40,
-      size.height * 0.90,
-    );
-
-    canvas.drawRect(building, buildingPaint);
-
-    // Building floors.
-    for (var i = 1; i < 6; i++) {
-      final y = size.height * (i / 6);
-
-      canvas.drawLine(
-        Offset(
-          size.width * 0.12,
-          y,
+  Widget _buildCameraUsageSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: AppColors.primarySurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: 0.75),
+          width: 1.2,
         ),
-        Offset(
-          size.width * 0.52,
-          y,
-        ),
-        darkPaint,
-      );
-    }
-
-    // Vertical construction lines.
-    for (var i = 1; i < 5; i++) {
-      final x = size.width * (0.12 + (0.40 * i / 5));
-
-      canvas.drawLine(
-        Offset(
-          x,
-          size.height * 0.10,
-        ),
-        Offset(
-          x,
-          size.height,
-        ),
-        darkPaint,
-      );
-    }
-
-    // Crane.
-    canvas.drawLine(
-      Offset(
-        size.width * 0.47,
-        size.height * 0.08,
       ),
-      Offset(
-        size.width * 0.80,
-        size.height * 0.08,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'How camera access is used',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _buildUsagePoint(
+            'The camera opens only from the capture screen.',
+          ),
+          const SizedBox(height: 7),
+          _buildUsagePoint(
+            'You can preview and retake before saving.',
+          ),
+          const SizedBox(height: 7),
+          _buildUsagePoint(
+            'Photos stay on your device until you choose to save them.',
+          ),
+        ],
       ),
-      cranePaint,
-    );
-
-    canvas.drawLine(
-      Offset(
-        size.width * 0.52,
-        size.height * 0.08,
-      ),
-      Offset(
-        size.width * 0.52,
-        size.height * 0.85,
-      ),
-      cranePaint,
-    );
-
-    canvas.drawLine(
-      Offset(
-        size.width * 0.68,
-        size.height * 0.08,
-      ),
-      Offset(
-        size.width * 0.62,
-        size.height * 0.50,
-      ),
-      cranePaint,
     );
   }
 
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
+  Widget _buildUsagePoint(String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 7),
+          child: Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: AppTypography.caption.copyWith(
+              color: AppColors.textSecondary,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

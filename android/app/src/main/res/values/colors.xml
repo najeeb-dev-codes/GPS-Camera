@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Must equal the background colour of AppSplashScreen (Flutter). -->
+    <color name="splash_background">#000000</color>
+</resources>

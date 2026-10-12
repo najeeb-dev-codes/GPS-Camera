@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -23,48 +24,33 @@ class PhotoQualityProcessingService {
     required DateTime capturedAt,
     required PhotoQualitySettings settings,
   }) async {
-    final decoded = img.decodeImage(stampedPngBytes);
-    if (decoded == null) {
-      throw Exception('Unable to decode stamped photo.');
-    }
+    // Decode, enhancement and PNG encoding are the most expensive operations.
+    // Keep them off the UI isolate so the Save Photo To screen remains smooth.
+    final capabilitiesFuture = PhotoQualityCapabilityService.read();
+    final preparedFuture = compute(
+      _preparePixelsInBackground,
+      <String, Object>{
+        'bytes': TransferableTypedData.fromList(<Uint8List>[stampedPngBytes]),
+        'hdr': settings.hdrCapture,
+        'autoEnhance': settings.autoEnhance,
+        'pngLevel': settings.watermarkCompression.pngLevel,
+      },
+    );
 
-    img.Image working = decoded;
-
-    // Functional single-frame HDR tone enhancement. The Flutter camera plugin
-    // does not expose universal native multi-frame HDR controls on Android.
-    if (settings.hdrCapture) {
-      working = img.adjustColor(
-        working,
-        contrast: 1.10,
-        saturation: 1.05,
-        exposure: 0.07,
-        gamma: 0.98,
-      );
-    }
-
-    if (settings.autoEnhance) {
-      working = img.adjustColor(
-        working,
-        contrast: 1.04,
-        saturation: 1.03,
-        brightness: 1.015,
-      );
-    }
-
-    final capabilities = await PhotoQualityCapabilityService.read();
+    final prepared = await preparedFuture;
+    final capabilities = await capabilitiesFuture;
+    final pngForEncoding =
+        (prepared['bytes']! as TransferableTypedData)
+            .materialize()
+            .asUint8List();
+    final outputWidth = prepared['width']! as int;
+    final outputHeight = prepared['height']! as int;
     var actualFormat = settings.format;
 
     if (actualFormat == PhotoImageFormatOption.heic &&
         !capabilities.heicSupported) {
       actualFormat = PhotoImageFormatOption.jpeg;
     }
-
-    final pngForEncoding = Uint8List.fromList(
-      img.encodePng(
-        working,
-        level: settings.watermarkCompression.pngLevel,
-      ),
-    );
 
     Uint8List finalBytes;
 
@@ -134,8 +120,8 @@ class PhotoQualityProcessingService {
     return PhotoProcessingResult(
       path: outputFile.path,
       metadata: PhotoCaptureMetadata(
-        width: working.width,
-        height: working.height,
+        width: outputWidth,
+        height: outputHeight,
         fileSizeBytes: fileSize,
         format: actualFormat.label,
         jpegQuality: actualFormat == PhotoImageFormatOption.png
@@ -149,4 +135,44 @@ class PhotoQualityProcessingService {
       ),
     );
   }
+}
+
+Future<Map<String, Object>> _preparePixelsInBackground(
+  Map<String, Object> request,
+) async {
+  final stampedBytes = (request['bytes']! as TransferableTypedData)
+      .materialize()
+      .asUint8List();
+  final decoded = img.decodeImage(stampedBytes);
+  if (decoded == null) {
+    throw Exception('Unable to decode stamped photo.');
+  }
+
+  img.Image working = decoded;
+  if (request['hdr']! as bool) {
+    working = img.adjustColor(
+      working,
+      contrast: 1.10,
+      saturation: 1.05,
+      exposure: 0.07,
+      gamma: 0.98,
+    );
+  }
+  if (request['autoEnhance']! as bool) {
+    working = img.adjustColor(
+      working,
+      contrast: 1.04,
+      saturation: 1.03,
+      brightness: 1.015,
+    );
+  }
+
+  final pngBytes = Uint8List.fromList(
+    img.encodePng(working, level: request['pngLevel']! as int),
+  );
+  return <String, Object>{
+    'bytes': TransferableTypedData.fromList(<Uint8List>[pngBytes]),
+    'width': working.width,
+    'height': working.height,
+  };
 }

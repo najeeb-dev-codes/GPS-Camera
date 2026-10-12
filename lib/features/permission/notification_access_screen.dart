@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/constants/app_brand.dart';
 import '../../core/services/permission_flow_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
+import 'permission_ad_gate.dart';
+import 'permission_recovery_dialog.dart';
 
 /// Screen 9 — Notifications.
 ///
@@ -16,9 +18,13 @@ import '../../shared/widgets/widgets.dart';
 class NotificationAccessScreen extends StatefulWidget {
   const NotificationAccessScreen({
     super.key,
+    this.requestOnOpen = false,
+    this.onAutomaticFinished,
     this.onFinished,
   });
 
+  final bool requestOnOpen;
+  final VoidCallback? onAutomaticFinished;
   final VoidCallback? onFinished;
 
   @override
@@ -28,10 +34,23 @@ class NotificationAccessScreen extends StatefulWidget {
 
 class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
   bool _isRequesting = false;
+  bool _automaticRequestFinished = false;
 
-  bool _photoCaptureAlerts = true;
-  bool _gpsAccuracyAlerts = true;
-  bool _backupSyncAlerts = true;
+  void _finishAutomaticRequest() {
+    if (!widget.requestOnOpen ||
+        !mounted ||
+        _automaticRequestFinished) {
+      return;
+    }
+
+    _automaticRequestFinished = true;
+    final onFinished = widget.onAutomaticFinished;
+    if (onFinished != null) {
+      onFinished();
+      return;
+    }
+    Navigator.of(context).pop();
+  }
 
   // ---------------------------------------------------------------------------
   // ALLOW NOTIFICATIONS
@@ -45,10 +64,21 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
     });
 
     try {
-      final currentStatus = await Permission.notification.status;
+      if (!await PermissionFlowService.isNotificationGranted()) {
+        final needsWarning =
+            await PermissionFlowService.shouldShowRequestWarning(
+          ManagedAppPermission.notifications,
+        );
+        if (needsWarning && mounted) {
+          await PermissionRecoveryDialog.showRepeatDenialToast(
+            context,
+            const [ManagedAppPermission.notifications],
+          );
+        }
 
-      if (!currentStatus.isGranted) {
-        await Permission.notification.request();
+        await PermissionFlowService.requestPermission(
+          ManagedAppPermission.notifications,
+        );
       }
     } catch (_) {
       // Notifications never block onboarding — fall through regardless.
@@ -59,6 +89,11 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
     setState(() {
       _isRequesting = false;
     });
+
+    if (widget.requestOnOpen) {
+      _finishAutomaticRequest();
+      return;
+    }
 
     if (widget.onFinished != null) {
       widget.onFinished!();
@@ -96,11 +131,12 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
 
       appBar: AppTopBar(
         title: '',
-        onBack: _maybeLater,
+        showBack: !widget.requestOnOpen,
+        onBack: () => Navigator.of(context).pop(),
       ),
 
       body: SafeArea(
@@ -124,6 +160,14 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
                     ),
                     child: Column(
                       children: [
+                        if (widget.requestOnOpen) ...[
+                          PermissionAdGate(
+                            onReady: () {
+                              _allowNotifications();
+                            },
+                          ),
+                          const SizedBox(height: 20),
+                        ],
                         // -----------------------------------------------------
                         // BELL ICON
                         // -----------------------------------------------------
@@ -132,7 +176,7 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
                           width: width >= 600 ? 92 : 78,
                           height: width >= 600 ? 92 : 78,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF0E7FF),
+                            color: AppColors.primarySurface,
                             borderRadius: BorderRadius.circular(24),
                           ),
                           alignment: Alignment.center,
@@ -167,8 +211,8 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 340),
                           child: Text(
-                            'Get useful alerts when a photo is saved, GPS '
-                            'accuracy is low, or cloud backup completes.',
+                            'Notification permission keeps you updated about '
+                            'important activity in ${AppBrand.name}.',
                             textAlign: TextAlign.center,
                             style: AppTypography.body.copyWith(
                               color: AppColors.textSecondary,
@@ -192,111 +236,37 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
                         const SizedBox(height: 10),
 
                         _buildSampleNotification(
-                          icon: Icons.warning_amber_rounded,
-                          iconColor: AppColors.warning,
-                          title: 'GPS signal accuracy is ±18 m',
-                          subtitle: 'Accuracy may vary in this area.',
+                          icon: Icons.folder_outlined,
+                          iconColor: AppColors.primary,
+                          title: 'Project created successfully',
+                          subtitle: 'Your new project is ready to use.',
                         ),
 
                         const SizedBox(height: 10),
 
                         _buildSampleNotification(
-                          icon: Icons.cloud_done_rounded,
+                          icon: Icons.notifications_outlined,
                           iconColor: AppColors.primary,
-                          title: 'Backup completed',
-                          subtitle: 'Your photos are safely backed up.',
+                          title: AppBrand.name,
+                          subtitle: 'You have a new app notification.',
                         ),
 
                         const SizedBox(height: 20),
-
-                        // -----------------------------------------------------
-                        // RECOMMENDED CATEGORIES
-                        // -----------------------------------------------------
-
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Recommended notification categories',
-                            style: AppTypography.caption.copyWith(
-                              color: AppColors.textSecondary,
-                              fontWeight: FontWeight.w600,
-                            ),
+                        _buildPrivacyCard(),
+                        const SizedBox(height: 14),
+                        _buildNotificationPoints(),
+                        if (!widget.requestOnOpen) ...[
+                          const SizedBox(height: 20),
+                          const AdBannerWidget(
+                            format: AdDisplayFormat.mediumRectangle,
+                            reserveSpaceWhileLoading: true,
                           ),
-                        ),
-
-                        const SizedBox(height: 4),
-
-                        ToggleSettingRow(
-                          icon: Icons.photo_camera_outlined,
-                          title: 'Photo & Capture Alerts',
-                          value: _photoCaptureAlerts,
-                          onChanged: (value) {
-                            setState(() {
-                              _photoCaptureAlerts = value;
-                            });
-                          },
-                        ),
-
-                        ToggleSettingRow(
-                          icon: Icons.gps_fixed_rounded,
-                          title: 'GPS Accuracy Alerts',
-                          value: _gpsAccuracyAlerts,
-                          onChanged: (value) {
-                            setState(() {
-                              _gpsAccuracyAlerts = value;
-                            });
-                          },
-                        ),
-
-                        ToggleSettingRow(
-                          icon: Icons.backup_rounded,
-                          title: 'Backup & Sync Alerts',
-                          value: _backupSyncAlerts,
-                          onChanged: (value) {
-                            setState(() {
-                              _backupSyncAlerts = value;
-                            });
-                          },
-                        ),
+                        ],
                       ],
                     ),
                   ),
                 ),
 
-                // -------------------------------------------------------------
-                // BOTTOM ACTIONS
-                // -------------------------------------------------------------
-
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    16,
-                  ),
-                  child: Column(
-                    children: [
-                      AppPrimaryButton(
-                        label: 'Allow Notifications',
-                        isLoading: _isRequesting,
-                        onPressed: _allowNotifications,
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      TextButton(
-                        onPressed: _isRequesting ? null : _maybeLater,
-                        child: Text(
-                          'Maybe Later',
-                          style: AppTypography.bodyMedium.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             );
           },
@@ -319,7 +289,7 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
       ),
@@ -348,6 +318,109 @@ class _NotificationAccessScreenState extends State<NotificationAccessScreen> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrivacyCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.shield_outlined,
+            size: 22,
+            color: AppColors.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Notifications are optional and can be changed anytime in Settings.',
+              style: AppTypography.caption.copyWith(
+                color: AppColors.textSecondary,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primarySurface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Recommended',
+              style: AppTypography.caption.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotificationPoints() {
+    const points = [
+      'Confirms when a captured photo is saved successfully.',
+      'Confirms when a new project is created successfully.',
+      'Shows scheduled or custom app notifications.',
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.primarySurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.primaryLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Notifications you may receive',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final point in points) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Icon(
+                    Icons.circle,
+                    size: 6,
+                    color: AppColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    point,
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.textSecondary,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (point != points.last) const SizedBox(height: 6),
+          ],
         ],
       ),
     );

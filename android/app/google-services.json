@@ -1,65 +1,26 @@
 {
   "project_info": {
-    "project_number": "755318598154",
-    "project_id": "fb-analytics-d02ea",
-    "storage_bucket": "fb-analytics-d02ea.firebasestorage.app"
+    "project_number": "1078538929425",
+    "project_id": "raiyaan-apps",
+    "storage_bucket": "raiyaan-apps.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:755318598154:android:12d54877c7555914114df3",
+        "mobilesdk_app_id": "1:1078538929425:android:2d1d452a306f1fdba7f8b0",
         "android_client_info": {
-          "package_name": "com.example.gps_camera_app"
+          "package_name": "com.raiyaan_infotech.gpsmark"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "755318598154-4gqh0f6ft6nkj4ue1vodvi4rbada4oj6.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAXDqztUvxuC7DjNcqMgeXuCMgEVvG44iw"
+          "current_key": "AIzaSyDvNWu2ZtZ1wqTtnIhsUhmDQUsWqGQsnyo"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "755318598154-4gqh0f6ft6nkj4ue1vodvi4rbada4oj6.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:755318598154:android:942ab0c94d589a22114df3",
-        "android_client_info": {
-          "package_name": "gps_camera_.app"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "755318598154-4gqh0f6ft6nkj4ue1vodvi4rbada4oj6.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAXDqztUvxuC7DjNcqMgeXuCMgEVvG44iw"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "755318598154-4gqh0f6ft6nkj4ue1vodvi4rbada4oj6.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }

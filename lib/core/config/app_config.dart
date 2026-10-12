@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 class AppConfig {
   AppConfig._();
 
@@ -7,17 +5,23 @@ class AppConfig {
   // BUILD-TIME OVERRIDE
   // ---------------------------------------------------------------------------
 
-  /// Optional complete API URL provided using --dart-define.
+  /// Optional API URL supplied using --dart-define.
   ///
   /// Example:
+  /// flutter run --dart-define=API_BASE_URL=http://192.168.1.50:8000
   ///
-  /// flutter run \
-  ///   --dart-define=API_BASE_URL=http://192.168.1.50:8000
-  ///
-  /// If provided, this always takes priority.
-  static const String _overrideBaseUrl =
-      String.fromEnvironment(
+  /// When provided, this URL takes priority.
+  static const String _overrideBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
+    defaultValue: '',
+  );
+
+  /// Optional version API host supplied using --dart-define.
+  ///
+  /// Example:
+  /// --dart-define=APP_VERSION_BASE_URL=https://example.com
+  static const String _overrideAppVersionBaseUrl = String.fromEnvironment(
+    'APP_VERSION_BASE_URL',
     defaultValue: '',
   );
 
@@ -25,21 +29,29 @@ class AppConfig {
   // ENVIRONMENT
   // ---------------------------------------------------------------------------
 
-  /// Optional environment override.
+  /// Optional environment supplied using --dart-define.
   ///
-  /// When ENV is omitted:
-  /// - release builds automatically use production
-  /// - debug/profile builds automatically use development
-  static const String _env =
-      String.fromEnvironment(
+  /// Production:
+  /// flutter run --dart-define=ENV=prod
+  ///
+  /// Local development:
+  /// flutter run --dart-define=ENV=dev
+  ///
+  /// When ENV is not supplied, the live production server is used.
+  static const String _env = String.fromEnvironment(
     'ENV',
     defaultValue: '',
   );
 
   static bool get isProd {
-    if (_env == 'prod') return true;
-    if (_env == 'dev') return false;
-    return kReleaseMode;
+    final environment = _env.trim().toLowerCase();
+
+    if (environment == 'dev' || environment == 'development') {
+      return false;
+    }
+
+    // Production is the default for debug, profile and release builds.
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -47,63 +59,74 @@ class AppConfig {
   // ---------------------------------------------------------------------------
 
   static const String _prodBaseUrl =
-      'https://gps-camera.onrender.com';
+      'https://mobileapps.raiyaaninfotech.in/';
+
+  /// App-version API host supplied by the backend team.
+  static const String _prodAppVersionBaseUrl =
+      'https://mobileapps.raiyaaninfotech.in/';
 
   // ---------------------------------------------------------------------------
   // DEVELOPMENT SERVER
   // ---------------------------------------------------------------------------
 
-  /// Backend PC Wi-Fi IPv4 address.
+  /// Local backend computer's Wi-Fi IPv4 address.
   ///
-  /// Your physical phone must be connected to the same network.
-  static const String _lanDevIp =
-      '192.168.1.36';
+  /// This is used only when running with:
+  /// --dart-define=ENV=dev
+  static const String _lanDevIp = '192.168.1.36';
 
-  /// Backend server port.
-  static const String _devPort =
-      '8000';
+  static const String _devPort = '8000';
 
   // ---------------------------------------------------------------------------
   // BASE URL
   // ---------------------------------------------------------------------------
 
-  /// Final API base URL used throughout the application.
-  static final String baseUrl =
-      _resolveBaseUrl();
+  static final String baseUrl = _resolveBaseUrl();
+  static final String appVersionBaseUrl = _resolveAppVersionBaseUrl();
 
   static String _resolveBaseUrl() {
-    // 1. Explicit dart-define takes highest priority.
-    if (_overrideBaseUrl.trim().isNotEmpty) {
-      return _stripTrailingSlash(
-        _overrideBaseUrl.trim(),
-      );
+    final overrideUrl = _overrideBaseUrl.trim();
+
+    // Explicit API_BASE_URL has the highest priority.
+    if (overrideUrl.isNotEmpty) {
+      return _stripTrailingSlash(overrideUrl);
     }
 
-    // 2. Production environment.
-    if (isProd) {
-      return _stripTrailingSlash(
-        _prodBaseUrl,
-      );
+    // Use the local backend only when ENV=dev is explicitly supplied.
+    if (!isProd) {
+      return 'http://$_lanDevIp:$_devPort';
     }
 
-    // 3. Development physical device.
-    return 'http://$_lanDevIp:$_devPort';
+    // Default to the live production backend.
+    return _stripTrailingSlash(_prodBaseUrl);
+  }
+
+  static String _resolveAppVersionBaseUrl() {
+    final overrideUrl = _overrideAppVersionBaseUrl.trim();
+    if (overrideUrl.isNotEmpty) {
+      return _stripTrailingSlash(overrideUrl);
+    }
+
+    // Local development can serve every endpoint from the same host.
+    if (!isProd) return baseUrl;
+
+    return _stripTrailingSlash(_prodAppVersionBaseUrl);
   }
 
   // ---------------------------------------------------------------------------
   // HELPERS
   // ---------------------------------------------------------------------------
 
-  static String _stripTrailingSlash(
-    String url,
-  ) {
-    while (url.endsWith('/')) {
-      url = url.substring(
+  static String _stripTrailingSlash(String url) {
+    var normalizedUrl = url.trim();
+
+    while (normalizedUrl.endsWith('/')) {
+      normalizedUrl = normalizedUrl.substring(
         0,
-        url.length - 1,
+        normalizedUrl.length - 1,
       );
     }
 
-    return url;
+    return normalizedUrl;
   }
 }

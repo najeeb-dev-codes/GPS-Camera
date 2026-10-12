@@ -48,7 +48,7 @@ class ComingSoonDialog extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(AppSpacing.xl),
           decoration: BoxDecoration(
-            color: AppColors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(AppRadius.lg),
             boxShadow: const [
               BoxShadow(
@@ -74,7 +74,7 @@ class ComingSoonDialog extends StatelessWidget {
               Container(
                 width: 76,
                 height: 76,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: AppColors.primarySurface,
                   shape: BoxShape.circle,
                 ),

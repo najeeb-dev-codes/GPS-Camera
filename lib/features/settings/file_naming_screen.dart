@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../core/constants/app_input_limits.dart';
 import '../../core/services/app_settings_service.dart';
+import '../../core/services/file_naming_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 
-/// Settings > File Naming.
+/// Settings > File Name Format.
 ///
 /// Live filename preview, a toggleable "naming pattern" chip set
 /// (Project / Date / Time / Sequence / Latitude / +), prefix field, date
@@ -32,6 +35,15 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
     _prefixController = TextEditingController(text: settings.fileNamingPrefix);
     _startNumberController =
         TextEditingController(text: settings.sequenceStartNumber.toString());
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final settings = AppSettingsService.instance;
+    await settings.ensureFileNamingSettingsLoaded();
+    if (!mounted) return;
+    _prefixController.text = settings.fileNamingPrefix;
+    _startNumberController.text = settings.sequenceStartNumber.toString();
   }
 
   @override
@@ -47,15 +59,17 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
         .toList();
 
     if (remaining.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('All naming fields are already added')),
+      AppTopToast.show(
+        context,
+        message: 'All naming fields are already added',
+        icon: Icons.info_outline_rounded,
       );
       return;
     }
 
     final selected = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: AppColors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
       ),
@@ -89,8 +103,34 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
     final settings = AppSettingsService.instance;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: const AppTopBar(title: 'File Naming'),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppTopBar(
+        title: 'File Name Format',
+        actions: [
+          TextButton(
+            onPressed: () {
+              settings.resetFileNamingSettings();
+              _prefixController.text = settings.fileNamingPrefix;
+              _startNumberController.text =
+                  settings.sequenceStartNumber.toString();
+              AppTopToast.show(
+                context,
+                message: 'Reset successfully',
+                icon: Icons.refresh_rounded,
+                backgroundColor: Colors.green,
+              );
+              Navigator.of(context).pop();
+            },
+            child: Text(
+              'Reset',
+              style: AppTypography.bodyMedium.copyWith(
+                color: Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         top: false,
         child: ListenableBuilder(
@@ -101,8 +141,11 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                 final horizontalPadding =
                     constraints.maxWidth >= 600 ? 48.0 : AppSpacing.screenPadding;
 
-                return Column(
-                  children: [
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      children: [
                     Expanded(
                       child: ListView(
                         padding: EdgeInsets.fromLTRB(
@@ -125,21 +168,33 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                               vertical: AppSpacing.md,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF7F2FF),
+                              color: AppColors.primarySurface,
                               borderRadius: BorderRadius.circular(AppRadius.md),
-                              border: Border.all(color: const Color(0xFFD8C1FF)),
+                              border: Border.all(
+                                color: AppColors.isDarkMode
+                                    ? AppColors.primaryLight
+                                    : AppColors.primaryLight.withValues(
+                                        alpha: 0.55,
+                                      ),
+                              ),
                             ),
-                            child: Text(
-                              settings.fileNamePreview,
-                              style: AppTypography.bodyMedium.copyWith(
-                                color: AppColors.primary,
-                                fontWeight: FontWeight.w700,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.center,
+                              child: Text(
+                                FileNamingService.preview(),
+                                textAlign: TextAlign.center,
+                                style: AppTypography.bodyMedium.copyWith(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             ),
                           ),
 
                           const SizedBox(height: AppSpacing.lg),
 
+                          SettingsSectionCard(children: [
                           Text(
                             'Naming Pattern',
                             style: AppTypography.bodyMedium
@@ -167,9 +222,10 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                           const SizedBox(height: AppSpacing.lg),
 
                           AppTextField(
-                            label: 'Prefix',
+                            label: 'Project Name',
                             controller: _prefixController,
-                            hint: 'e.g. SITE-A',
+                            hint: 'e.g. SITE-A or WORK',
+                            maxLength: AppInputLimits.fileNamePrefix,
                             onChanged: (v) =>
                                 settings.set(() => settings.fileNamingPrefix = v),
                           ),
@@ -189,7 +245,7 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                             onChanged: (v) => settings.set(() => settings.timeFormat = v!),
                           ),
 
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                             child: Divider(height: 1, color: AppColors.border),
                           ),
@@ -207,6 +263,10 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                               label: 'Start number',
                               controller: _startNumberController,
                               keyboardType: TextInputType.number,
+                              maxLength: AppInputLimits.sequenceNumber,
+                              inputFormatters: <TextInputFormatter>[
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
                               onChanged: (v) {
                                 final n = int.tryParse(v);
                                 if (n != null) {
@@ -223,9 +283,11 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                             onChanged: (v) =>
                                 settings.set(() => settings.avoidDuplicateNames = v),
                           ),
+                          ]),
                         ],
                       ),
                     ),
+                    const AdBannerWidget(),
                     Padding(
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
@@ -234,17 +296,28 @@ class _FileNamingScreenState extends State<FileNamingScreen> {
                         16,
                       ),
                       child: AppPrimaryButton(
-                        label: 'Save Naming Format',
+                        label: 'Save Changes',
                         icon: Icons.save_outlined,
-                        onPressed: () {
+                        onPressed: () async {
                           FocusScope.of(context).unfocus();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Naming format saved')),
+                          await settings.saveFileNamingSettings();
+                          await FileNamingService.resetSequence(
+                            settings.sequenceStartNumber,
                           );
+                          if (!context.mounted) return;
+                          AppTopToast.show(
+                            context,
+                            message: 'Changes saved successfully',
+                            icon: Icons.drive_file_rename_outline,
+                            backgroundColor: Colors.green,
+                          );
+                          Navigator.of(context).pop();
                         },
                       ),
                     ),
-                  ],
+                      ],
+                    ),
+                  ),
                 );
               },
             );
@@ -274,7 +347,7 @@ class _NamingChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary : AppColors.neutral100,
+          color: selected ? AppColors.primary : AppColors.mutedSurface,
           borderRadius: BorderRadius.circular(AppRadius.pill),
           border: Border.all(
             color: selected ? AppColors.primary : AppColors.border,

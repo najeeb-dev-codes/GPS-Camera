@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/services/captured_photo_service.dart';
@@ -15,12 +17,11 @@ class ProjectData {
     required this.client,
     required this.location,
     required this.description,
-    required this.color,
     required this.status,
     required this.updatedAt,
-    required this.useStampPreset,
-    required this.autoSaveCaptures,
-    required this.defaultStampTemplate,
+    this.recentActivityAt,
+    this.coverImagePath,
+    this.colorValue = 0xFF6D28D9,
     List<String>? photoIds,
   }) : photoIds = photoIds ?? <String>[];
 
@@ -30,12 +31,11 @@ class ProjectData {
   String client;
   String location;
   String description;
-  Color color;
+  String? coverImagePath;
+  int colorValue;
   ProjectStatus status;
   DateTime updatedAt;
-  bool useStampPreset;
-  bool autoSaveCaptures;
-  String defaultStampTemplate;
+  DateTime? recentActivityAt;
   final List<String> photoIds;
 
   List<CapturedPhoto> _photos = <CapturedPhoto>[];
@@ -67,24 +67,11 @@ class ProjectData {
     return '';
   }
 
-  int get stampTemplateIndex {
-    final normalized = defaultStampTemplate.trim().toLowerCase();
-    return switch (normalized) {
-      'default' || 'location card' => 1,
-      'qr' || 'qr split' => 2,
-      'time & place' => 3,
-      'minimal' || 'minimal proof' => 4,
-      _ => 0, // Map and legacy Map Proof
-    };
-  }
-
   int get storageBytes => _photos.fold<int>(
         0,
         (total, photo) =>
             total + (photo.captureMetadata?.fileSizeBytes ?? 0),
       );
-
-  CapturedPhoto? get recentPhoto => _photos.isEmpty ? null : _photos.first;
 
   String get storageLabel {
     final bytes = storageBytes;
@@ -119,16 +106,19 @@ class ProjectData {
         'client': client,
         'location': location,
         'description': description,
-        'color': color.toARGB32(),
+        'coverImagePath': coverImagePath,
+        'colorValue': colorValue,
         'status': status.name,
         'updatedAt': updatedAt.toIso8601String(),
-        'useStampPreset': useStampPreset,
-        'autoSaveCaptures': autoSaveCaptures,
-        'defaultStampTemplate': defaultStampTemplate,
+        'recentActivityAt': recentActivityAt?.toIso8601String(),
         'photoIds': photoIds,
       };
 
   factory ProjectData.fromJson(Map<String, dynamic> json) {
+    final storedCoverImagePath = (json['coverImagePath'] as String?)?.trim();
+    final coverImagePath = isGeneratedProjectNameCover(storedCoverImagePath)
+        ? null
+        : storedCoverImagePath;
     return ProjectData(
       id: json['id'] as String,
       name: (json['name'] as String?) ?? 'Untitled Project',
@@ -136,16 +126,17 @@ class ProjectData {
       client: (json['client'] as String?) ?? '',
       location: (json['location'] as String?) ?? '',
       description: (json['description'] as String?) ?? '',
-      color: Color((json['color'] as num?)?.toInt() ?? 0xFF4F21C8),
+      coverImagePath:
+          coverImagePath == null || coverImagePath.isEmpty ? null : coverImagePath,
+      colorValue: (json['colorValue'] as num?)?.toInt() ?? 0xFF6D28D9,
       status: json['status'] == ProjectStatus.archived.name
           ? ProjectStatus.archived
           : ProjectStatus.active,
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
-      useStampPreset: json['useStampPreset'] as bool? ?? true,
-      autoSaveCaptures: json['autoSaveCaptures'] as bool? ?? false,
-      defaultStampTemplate:
-          _normalizeTemplateName(json['defaultStampTemplate'] as String?),
+      recentActivityAt: DateTime.tryParse(
+        json['recentActivityAt'] as String? ?? '',
+      ),
       photoIds: (json['photoIds'] as List<dynamic>? ?? const <dynamic>[])
           .whereType<String>()
           .toList(),
@@ -153,25 +144,30 @@ class ProjectData {
   }
 }
 
-String _normalizeTemplateName(String? value) {
-  return switch (value?.trim().toLowerCase()) {
-    'location card' => 'Default',
-    'qr split' => 'QR',
-    'time & place' => 'Time & Place',
-    'minimal' || 'minimal proof' => 'Minimal',
-    'default' => 'Default',
-    'qr' => 'QR',
-    _ => 'Map',
-  };
+bool isGeneratedProjectNameCover(String? path) {
+  if (path == null || path.isEmpty) return false;
+  final normalizedPath = path.replaceAll('\\', '/');
+  final segments = normalizedPath.split('/');
+  if (segments.length < 2) return false;
+  final parentDirectory = segments[segments.length - 2];
+  final fileName = segments.last;
+  // Generated initials covers use the exact project_<timestamp>.png format.
+  // Do not classify cropped user-selected images such as
+  // project_cover_crop_<timestamp>.png as generated covers.
+  return parentDirectory == 'project_covers' &&
+      RegExp(r'^project_\d+\.png$').hasMatch(fileName);
 }
 
 class ProjectRepository extends ChangeNotifier {
-  ProjectRepository._();
+  ProjectRepository._() {
+    _scheduleRecentActivityExpiry();
+  }
 
   static final ProjectRepository instance = ProjectRepository._();
   static const String _storageKey = 'gps_camera_projects_v2';
 
   final List<ProjectData> _projects = <ProjectData>[];
+  Timer? _recentActivityTimer;
   bool _loaded = false;
   bool _loading = false;
 
@@ -180,6 +176,33 @@ class ProjectRepository extends ChangeNotifier {
     final result = List<ProjectData>.of(_projects)
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return List.unmodifiable(result);
+  }
+
+  List<ProjectData> get recentProjects {
+    final now = DateTime.now();
+    final result = _projects
+        .where((project) {
+          final activity = project.recentActivityAt?.toLocal();
+          return activity != null &&
+              activity.year == now.year &&
+              activity.month == now.month &&
+              activity.day == now.day;
+        })
+        .toList()
+      ..sort((a, b) =>
+          b.recentActivityAt!.compareTo(a.recentActivityAt!));
+    return List.unmodifiable(result);
+  }
+
+  void _scheduleRecentActivityExpiry() {
+    _recentActivityTimer?.cancel();
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    final duration = nextMidnight.difference(now);
+    _recentActivityTimer = Timer(duration, () {
+      notifyListeners();
+      _scheduleRecentActivityExpiry();
+    });
   }
 
   Future<void> ensureLoaded({bool refreshPhotos = false}) async {
@@ -231,6 +254,7 @@ class ProjectRepository extends ChangeNotifier {
 
   Future<void> add(ProjectData project) async {
     await ensureLoaded();
+    project.recentActivityAt ??= DateTime.now();
     _projects.removeWhere((item) => item.id == project.id);
     _projects.insert(0, project);
     await _persist();
@@ -249,11 +273,32 @@ class ProjectRepository extends ChangeNotifier {
     await _persist();
   }
 
+  Future<void> delete(String projectId) async {
+    await ensureLoaded();
+    final project = findById(projectId);
+    if (project == null) return;
+
+    await CapturedPhotoService.clearProjectAssignment(projectId);
+    _projects.removeWhere((item) => item.id == projectId);
+    await _persist();
+
+    final coverPath = project.coverImagePath;
+    if (coverPath != null && coverPath.isNotEmpty) {
+      try {
+        final cover = File(coverPath);
+        if (await cover.exists()) await cover.delete();
+      } catch (_) {
+        // Project deletion remains successful if cover cleanup is unavailable.
+      }
+    }
+  }
+
   Future<void> attachPhoto(String projectId, CapturedPhoto photo) async {
     await ensureLoaded();
     final project = findById(projectId);
     if (project == null) throw Exception('Selected project was not found.');
     if (!project.photoIds.contains(photo.id)) project.photoIds.add(photo.id);
+    project.recentActivityAt = DateTime.now();
     project.updatedAt = photo.capturedAt;
     await ensureLoaded(refreshPhotos: true);
     await _persist();
@@ -268,12 +313,15 @@ class ProjectRepository extends ChangeNotifier {
     if (target == null) throw Exception('Selected project was not found.');
 
     final movedIds = photos.map((photo) => photo.id).toSet();
+    if (movedIds.isEmpty) return;
+
     for (final project in _projects) {
       project.photoIds.removeWhere(movedIds.contains);
     }
     for (final id in movedIds) {
       if (!target.photoIds.contains(id)) target.photoIds.add(id);
     }
+    target.recentActivityAt = DateTime.now();
     target.updatedAt = DateTime.now();
     await ensureLoaded(refreshPhotos: true);
     await _persist();
@@ -289,3 +337,4 @@ class ProjectRepository extends ChangeNotifier {
     notifyListeners();
   }
 }
+

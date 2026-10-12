@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/models/stamp_template.dart';
 import '../../core/services/app_settings_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
@@ -16,13 +17,12 @@ class StampTemplateInfo {
   final String label;
 }
 
-const List<StampTemplateInfo> kBuiltInStampTemplates = [
-  StampTemplateInfo(label: 'Map'),
-  StampTemplateInfo(label: 'Default'),
-  StampTemplateInfo(label: 'QR'),
-  StampTemplateInfo(label: 'Time & Place'),
-  StampTemplateInfo(label: 'Minimal'),
-];
+final List<StampTemplateInfo> kBuiltInStampTemplates =
+    List<StampTemplateInfo>.unmodifiable(
+  StampTemplate.values.map(
+    (template) => StampTemplateInfo(label: template.label),
+  ),
+);
 
 /// Screen 6 — Stamp Templates.
 ///
@@ -30,7 +30,7 @@ const List<StampTemplateInfo> kBuiltInStampTemplates = [
 /// [GpsStampOverlay] so a
 /// template looks identical here as it does on a live photo. Every template
 /// has its own "Customize Stamp" action; customization edits that template
-/// and never adds a sixth stamp.
+/// and never adds another stamp.
 ///
 /// When [selectionMode] is true (opened from Live Camera to pick a
 /// template for the next shot) "Apply Template" pops with the chosen
@@ -40,12 +40,12 @@ class StampTemplatesScreen extends StatefulWidget {
   const StampTemplatesScreen({
     super.key,
     this.selectionMode = false,
-    this.initialSelectedIndex = 2, // "Map Card" — matches the mockup.
+    this.initialSelectedIndex,
     this.stampData,
   });
 
   final bool selectionMode;
-  final int initialSelectedIndex;
+  final int? initialSelectedIndex;
 
   /// Current live stamp from Camera, or frozen stamp from Capture Preview.
   final GpsStampData? stampData;
@@ -61,9 +61,25 @@ class _StampTemplatesScreenState extends State<StampTemplatesScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedIndex = widget.initialSelectedIndex
-        .clamp(0, kBuiltInStampTemplates.length - 1)
-        .toInt();
+    final savedIndex = AppSettingsService.instance.selectedStampTemplateIndex;
+    _selectedIndex = StampTemplate.fromIndex(
+      widget.initialSelectedIndex ?? savedIndex,
+    ).index;
+    _restoreAppliedTemplate();
+  }
+
+  Future<void> _restoreAppliedTemplate() async {
+    if (widget.initialSelectedIndex != null) return;
+
+    final settings = AppSettingsService.instance;
+    await settings.ensureStampTemplateSettingsLoaded();
+    if (!mounted) return;
+
+    setState(() {
+      _selectedIndex = StampTemplate.fromIndex(
+        settings.selectedStampTemplateIndex,
+      ).index;
+    });
   }
 
   Future<void> _openCustomize(int index) async {
@@ -81,7 +97,33 @@ class _StampTemplatesScreenState extends State<StampTemplatesScreen> {
     setState(() => _selectedIndex = index);
   }
 
-  void _applyTemplate() {
+  Future<void> _resetTemplates() async {
+    await AppSettingsService.instance.setSelectedStampTemplateIndex(0);
+    if (!mounted) return;
+
+    setState(() => _selectedIndex = 0);
+    AppTopToast.show(
+      context,
+      message: 'Reset successfully',
+      icon: Icons.refresh_rounded,
+      backgroundColor: Colors.green,
+    );
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _applyTemplate() async {
+    await AppSettingsService.instance.setSelectedStampTemplateIndex(
+      _selectedIndex,
+    );
+    if (!mounted) return;
+
+    AppTopToast.show(
+      context,
+      message: 'Stamp template applied successfully',
+      icon: Icons.check_circle_outline_rounded,
+      backgroundColor: Colors.green,
+    );
+
     if (widget.selectionMode) {
       Navigator.of(context).pop(_selectedIndex);
     } else {
@@ -105,8 +147,22 @@ class _StampTemplatesScreenState extends State<StampTemplatesScreen> {
         );
 
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: const AppTopBar(title: 'Stamp Templates'),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppTopBar(
+        title: 'Stamp Templates',
+        actions: [
+          TextButton(
+            onPressed: _resetTemplates,
+            child: Text(
+              'Reset',
+              style: AppTypography.bodyMedium.copyWith(
+                color: Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         top: false,
         child: LayoutBuilder(
@@ -118,7 +174,6 @@ class _StampTemplatesScreenState extends State<StampTemplatesScreen> {
                 constraints.maxWidth - (horizontalPadding * 2);
             final stampRowHeight =
                 (availableWidth * 0.16).clamp(64.0, 88.0).toDouble();
-
             return Column(
               children: [
                 Expanded(
@@ -129,23 +184,42 @@ class _StampTemplatesScreenState extends State<StampTemplatesScreen> {
                       horizontalPadding,
                       AppSpacing.md,
                     ),
-                    itemCount: _templates.length,
+                    itemCount: _templates.length + 1,
                     separatorBuilder: (_, __) =>
                         const SizedBox(height: AppSpacing.md),
                     itemBuilder: (context, index) {
-                      final template = _templates[index];
-                      final selected = index == _selectedIndex;
+                      // Place a standard banner directly after Address and
+                      // before Time & Place, using the same row height as a
+                      // stamp preview.
+                      if (index == 2) {
+                        return _StampSizedAd(height: stampRowHeight);
+                      }
+
+                      final templateIndex = index > 2 ? index - 1 : index;
+                      final template = _templates[templateIndex];
+                      final selected = templateIndex == _selectedIndex;
 
                       return _TemplateTile(
-                        templateIndex: index,
+                        templateIndex: templateIndex,
                         template: template,
                         data: data,
                         height: stampRowHeight,
                         selected: selected,
-                        onTap: () => setState(() => _selectedIndex = index),
-                        onCustomize: () => _openCustomize(index),
+                        onTap: () =>
+                            setState(() => _selectedIndex = templateIndex),
+                        onCustomize: () => _openCustomize(templateIndex),
                       );
                     },
+                  ),
+                ),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 320),
+                    child: const AdBannerWidget(
+                      format: AdDisplayFormat.adaptiveBanner,
+                      reserveSpaceWhileLoading: true,
+                      slotHeight: 50,
+                    ),
                   ),
                 ),
                 Padding(
@@ -164,6 +238,25 @@ class _StampTemplatesScreenState extends State<StampTemplatesScreen> {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _StampSizedAd extends StatelessWidget {
+  const _StampSizedAd({required this.height});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return AdBannerWidget(
+      reserveSpaceWhileLoading: true,
+      slotHeight: height,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(AppRadius.sm / 2),
       ),
     );
   }
@@ -204,7 +297,7 @@ class _TemplateTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  template.label,
+                  '${template.label}${selected ? ' (Default)' : ''}',
                   style: AppTypography.caption.copyWith(
                     fontWeight: FontWeight.w600,
                     color: selected
@@ -218,8 +311,8 @@ class _TemplateTile extends StatelessWidget {
                 child: InkWell(
                   onTap: onCustomize,
                   borderRadius: BorderRadius.circular(AppRadius.sm),
-                  child: const Padding(
-                    padding: EdgeInsets.all(5),
+                  child: Padding(
+                    padding: const EdgeInsets.all(5),
                     child: Icon(
                       Icons.edit_outlined,
                       size: 18,
@@ -247,14 +340,14 @@ class _TemplateTile extends StatelessWidget {
                   children: [
                     Container(
                       decoration: BoxDecoration(
-                        color: AppColors.neutral100,
+                        color: AppColors.mutedSurface,
                         border: Border.all(
                           color: selected
                               ? AppColors.primary
                               : AppColors.border,
                           width: selected ? 2 : 1,
                         ),
-                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        borderRadius: BorderRadius.circular(AppRadius.sm / 2),
                       ),
                       padding: const EdgeInsets.all(4),
                       child: Align(
@@ -263,33 +356,39 @@ class _TemplateTile extends StatelessWidget {
                           widthFactor: scale,
                           heightFactor: scale,
                           child: ClipRRect(
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.md),
-                            child: FittedBox(
-                              fit: BoxFit.fill,
-                              alignment: Alignment.center,
-                              child: SizedBox(
-                                width: 520,
-                                child: GpsStampTemplateOverlay(
-                                  data: data,
-                                  templateIndex: templateIndex,
-                                  compact: true,
-                                  mapSize: 60,
-                                ),
-                              ),
-                            ),
+                            borderRadius: BorderRadius.circular(AppRadius.sm / 2),
+                            child: templateIndex == StampTemplate.minimal.index
+                                ? GpsStampTemplateOverlay(
+                                    data: data,
+                                    templateIndex: templateIndex,
+                                    compact: true,
+                                    mapSize: 60,
+                                  )
+                                : FittedBox(
+                                    fit: BoxFit.fill,
+                                    alignment: Alignment.center,
+                                    child: SizedBox(
+                                      width: 520,
+                                      child: GpsStampTemplateOverlay(
+                                        data: data,
+                                        templateIndex: templateIndex,
+                                        compact: true,
+                                        mapSize: 60,
+                                      ),
+                                    ),
+                                  ),
                           ),
                         ),
                       ),
                     ),
                     if (selected)
-                      const Positioned(
+                      Positioned(
                         top: 7,
                         right: 7,
                         child: CircleAvatar(
                           radius: 11,
                           backgroundColor: AppColors.primary,
-                          child: Icon(
+                          child: const Icon(
                             Icons.check,
                             size: 14,
                             color: AppColors.white,

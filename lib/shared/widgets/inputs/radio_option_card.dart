@@ -7,7 +7,7 @@ import '../../../core/theme/app_typography.dart';
 /// Selectable card with a leading icon, title, subtitle and a radio dot.
 ///
 /// Used on "Save Photo To" (Device Gallery / Project Folder) and
-/// "Allow GeoStamp Camera to access this device's location?"
+/// "Allow GPS Mark to access this device's location?"
 /// (Precise / Approximate).
 class RadioOptionCard extends StatelessWidget {
   const RadioOptionCard({
@@ -33,7 +33,7 @@ class RadioOptionCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primarySurface : AppColors.white,
+          color: selected ? AppColors.primarySurface : AppColors.surface,
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(
             color: selected ? AppColors.primary : AppColors.border,

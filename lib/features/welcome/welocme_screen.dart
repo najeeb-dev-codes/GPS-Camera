@@ -43,7 +43,7 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(
@@ -58,9 +58,12 @@ class WelcomeScreen extends StatelessWidget {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Location icon
-                    const AppLogoMark(
-                      size: 110,
+                    // GPS Mark app icon
+                    Image.asset(
+                      'assets/icon/app_icon_png.png',
+                      width: 110,
+                      height: 110,
+                      fit: BoxFit.contain,
                     ),
 
                     const SizedBox(
@@ -95,11 +98,34 @@ class WelcomeScreen extends StatelessWidget {
               // ------------------------------------------------------------
               Padding(
                 padding: const EdgeInsets.only(
-                  bottom: 20,
+                  bottom: 12,
                 ),
-                child: AppPrimaryButton(
-                  label: _ctaLabel,
-                  onPressed: () => _handleGetStarted(context),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppPrimaryButton(
+                      label: _ctaLabel,
+                      onPressed: () => _handleGetStarted(context),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Powered by Raiyaan Infotech',
+                      textAlign: TextAlign.center,
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '© 2026 Raiyaan Infotech. All rights reserved.',
+                      textAlign: TextAlign.center,
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

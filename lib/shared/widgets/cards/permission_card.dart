@@ -15,6 +15,7 @@ class PermissionCard extends StatelessWidget {
     this.accessLabel,
     this.accessLabelColor,
     this.showArrow = false,
+    this.trailingIcon,
   });
 
   final IconData icon;
@@ -31,6 +32,7 @@ class PermissionCard extends StatelessWidget {
   final Color? accessLabelColor;
 
   final bool showArrow;
+  final IconData? trailingIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +48,7 @@ class PermissionCard extends StatelessWidget {
           vertical: 12,
         ),
         decoration: BoxDecoration(
-          color: AppColors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
             color: AppColors.border,
@@ -59,14 +61,14 @@ class PermissionCard extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0xFFF1EAFF),
+                color: AppColors.primarySurface,
                 borderRadius: BorderRadius.circular(14),
               ),
               alignment: Alignment.center,
               child: Icon(
                 icon,
                 size: 25,
-                color: const Color(0xFF5B21B6),
+                color: AppColors.primaryDark,
               ),
             ),
 
@@ -222,7 +224,14 @@ class PermissionCard extends StatelessWidget {
             //   ),
             // ],
 
-            if (showArrow) ...[
+            if (trailingIcon != null) ...[
+              const SizedBox(width: 8),
+              Icon(
+                trailingIcon,
+                size: 24,
+                color: AppColors.textSecondary,
+              ),
+            ] else if (showArrow) ...[
               const SizedBox(width: 8),
               const Icon(
                 Icons.chevron_right_rounded,

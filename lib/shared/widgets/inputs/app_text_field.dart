@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
@@ -20,6 +21,9 @@ class AppTextField extends StatelessWidget {
     this.maxLines = 1,
     this.isSearch = false,
     this.keyboardType,
+    this.maxLength,
+    this.showCharacterCounter = false,
+    this.inputFormatters,
   });
 
   final TextEditingController? controller;
@@ -34,6 +38,9 @@ class AppTextField extends StatelessWidget {
   final bool isSearch;
 
   final TextInputType? keyboardType;
+  final int? maxLength;
+  final bool showCharacterCounter;
+  final List<TextInputFormatter>? inputFormatters;
 
   @override
   Widget build(BuildContext context) {
@@ -42,22 +49,33 @@ class AppTextField extends StatelessWidget {
       onChanged: onChanged,
       maxLines: maxLines,
       keyboardType: keyboardType,
+      maxLength: maxLength,
+      inputFormatters: inputFormatters,
       style: AppTypography.body,
       decoration: InputDecoration(
         hintText: hint,
+        counterText: maxLength != null && !showCharacterCounter ? '' : null,
         prefixIcon: prefixIcon != null
             ? Icon(prefixIcon, color: AppColors.neutral400, size: AppSizes.iconSm)
             : (isSearch ? const Icon(Icons.search, color: AppColors.neutral400) : null),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: isSearch ? AppColors.neutral100 : AppColors.white,
+        fillColor: isSearch
+            ? (AppColors.isDarkMode
+                ? AppColors.darkSurface
+                : AppColors.neutral100)
+            : AppColors.surface,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(isSearch ? AppRadius.pill : AppRadius.md),
-          borderSide: isSearch ? BorderSide.none : const BorderSide(color: AppColors.border),
+          borderSide: isSearch
+              ? BorderSide.none
+              : BorderSide(color: AppColors.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(isSearch ? AppRadius.pill : AppRadius.md),
-          borderSide: isSearch ? BorderSide.none : const BorderSide(color: AppColors.border),
+          borderSide: isSearch
+              ? BorderSide.none
+              : BorderSide(color: AppColors.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(isSearch ? AppRadius.pill : AppRadius.md),

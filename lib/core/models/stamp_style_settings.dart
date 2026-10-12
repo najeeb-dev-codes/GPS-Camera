@@ -46,7 +46,6 @@ class StampStyleSettings {
 const List<StampStyleSettings> kDefaultStampStyles = [
   StampStyleSettings(),
   StampStyleSettings(showMap: false),
-  StampStyleSettings(showMap: false),
   StampStyleSettings(
     showMap: false,
     showCoordinates: false,

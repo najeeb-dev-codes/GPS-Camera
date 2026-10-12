@@ -2,14 +2,21 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../../core/constants/app_brand.dart';
+import '../../core/constants/app_input_limits.dart';
 import '../../core/services/captured_photo_service.dart';
+import '../../core/services/app_settings_service.dart';
+import '../../core/services/file_naming_service.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 import '../projects/create_project_screen.dart';
 import '../projects/project_data.dart';
-import '../settings/photo_quality/models/photo_capture_metadata.dart';
+import '../notifications/models/app_notification.dart';
+import '../notifications/services/notification_repository.dart';
+import '../settings/photo_quality/models/photo_processing_result.dart';
 
 enum PhotoSaveDestination { deviceGallery, projectFolder }
 
@@ -23,19 +30,21 @@ class SavePhotoResult {
 class SavePhotoToScreen extends StatefulWidget {
   const SavePhotoToScreen({
     super.key,
-    required this.processedImagePath,
+    required this.preparedPhoto,
+    required this.previewImagePath,
+    required this.originalImagePath,
     required this.location,
     required this.capturedAt,
     required this.stampData,
-    required this.captureMetadata,
     this.initialProjectId,
   });
 
-  final String processedImagePath;
+  final Future<PhotoProcessingResult> preparedPhoto;
+  final String previewImagePath;
+  final String originalImagePath;
   final String location;
   final DateTime capturedAt;
   final GpsStampData stampData;
-  final PhotoCaptureMetadata captureMetadata;
   final String? initialProjectId;
 
   @override
@@ -51,6 +60,9 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
   String _projectFilter = 'Recent';
   bool _loading = true;
   bool _saving = false;
+  bool _preparingPhoto = true;
+  PhotoProcessingResult? _processedPhoto;
+  String? _preparationError;
 
   @override
   void initState() {
@@ -62,19 +74,30 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
     _repository.addListener(_refresh);
     _searchController.addListener(_refresh);
     _load();
+    _preparePhoto();
+  }
+
+  Future<void> _preparePhoto() async {
+    try {
+      final result = await widget.preparedPhoto;
+      if (!mounted) return;
+      setState(() {
+        _processedPhoto = result;
+        _preparingPhoto = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _preparingPhoto = false;
+        _preparationError = 'Unable to prepare this photo.';
+      });
+    }
   }
 
   Future<void> _load() async {
     await _repository.ensureLoaded(refreshPhotos: true);
     if (!mounted) return;
     setState(() => _loading = false);
-    final projectId = widget.initialProjectId;
-    final project = projectId == null ? null : _repository.findById(projectId);
-    if (project?.autoSaveCaptures == true) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_saving) _save();
-      });
-    }
   }
 
   void _refresh() {
@@ -127,39 +150,110 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
     if (_saving) return;
     if (_destination == PhotoSaveDestination.projectFolder &&
         _selectedProjectId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select a project folder first.')),
+      AppTopToast.show(
+        context,
+        message: 'Select a project folder first.',
+        icon: Icons.info_outline_rounded,
       );
       return;
     }
 
     setState(() => _saving = true);
     try {
+      // Processing may still be running in the background. Do not block the
+      // Save Photo screen itself; only wait here if the user saves before the
+      // final image is ready. The same in-flight Future is reused.
+      final processed = _processedPhoto ?? await widget.preparedPhoto;
+      if (!mounted) return;
+
+      if (_processedPhoto == null) {
+        setState(() {
+          _processedPhoto = processed;
+          _preparingPhoto = false;
+        });
+      }
+
       final projectId = _destination == PhotoSaveDestination.projectFolder
           ? _selectedProjectId
           : null;
+      final project =
+          projectId == null ? null : _repository.findById(projectId);
+      final extension = processed.path.split('.').last.toLowerCase();
+      final fileName = await FileNamingService.createFileName(
+        extension: extension,
+        projectName: project?.name,
+        latitude: widget.stampData.latitude,
+        capturedAt: widget.capturedAt,
+      );
       final photo = await CapturedPhotoService.saveProcessedPhoto(
-        sourcePath: widget.processedImagePath,
+        sourcePath: processed.path,
         location: widget.location,
         capturedAt: widget.capturedAt,
         stampData: widget.stampData,
-        captureMetadata: widget.captureMetadata,
+        captureMetadata: processed.metadata,
         projectId: projectId,
+        fileName: fileName,
       );
 
-      if (projectId == null) {
-        await CapturedPhotoService.saveToDeviceGallery(imagePath: photo.path);
-      } else {
+      await CapturedPhotoService.saveToDeviceGallery(
+        imagePath: photo.path,
+        projectName: project?.name,
+      );
+
+      if (projectId != null) {
         await _repository.attachPhoto(projectId, photo);
       }
 
+      if (AppSettingsService.instance.saveOriginalPhoto) {
+        final baseName = fileName.contains('.')
+            ? fileName.substring(0, fileName.lastIndexOf('.'))
+            : fileName;
+        await CapturedPhotoService.saveOriginalToDeviceGallery(
+          sourcePath: widget.originalImagePath,
+          fileName: '${baseName}_original.png',
+          projectName: project?.name,
+        );
+      }
+
+      try {
+        final notificationSettings = AppSettingsService.instance;
+        await notificationSettings.ensureNotificationSettingsLoaded();
+        if (notificationSettings.masterNotifications &&
+            notificationSettings.notifyCaptureSaved) {
+          final message = project == null
+              ? '$fileName was saved to the device gallery.'
+              : '$fileName was saved to Project: ${project.name}.';
+          await NotificationRepository.instance.add(
+            title: 'Photo saved successfully',
+            message: message,
+            type: AppNotificationType.photoSaved,
+            createdAt: DateTime.now(),
+            relatedPhotoId: photo.id,
+          );
+          await NotificationService.instance.showAppNotification(
+            title: 'Photo saved successfully',
+            body: message,
+            payload: <String, dynamic>{
+              'type': 'photoSaved',
+              'projectId': projectId,
+              'photoId': photo.id,
+            },
+          );
+        }
+      } catch (error) {
+        debugPrint('Photo saved notification skipped: $error');
+      }
+
       if (!mounted) return;
-      Navigator.of(context).pop(SavePhotoResult(photo: photo, projectId: projectId));
+      Navigator.of(context)
+          .pop(SavePhotoResult(photo: photo, projectId: projectId));
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to save photo: $error')),
+      AppTopToast.show(
+        context,
+        message: 'Unable to save photo: $error',
+        icon: Icons.error_outline_rounded,
       );
     }
   }
@@ -167,7 +261,7 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: const AppTopBar(title: 'Save Photo To'),
       body: SafeArea(
         top: false,
@@ -185,10 +279,27 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
                         padding: EdgeInsets.fromLTRB(padding, 12, padding, 20),
                         children: [
                           _PhotoSummary(
-                            imagePath: widget.processedImagePath,
+                            imagePath: widget.previewImagePath,
                             location: widget.location,
                             capturedAt: widget.capturedAt,
                           ),
+                          if (_preparingPhoto && _preparationError == null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Photo is being prepared in the background.',
+                              style: AppTypography.caption.copyWith(
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ] else if (_preparationError != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _preparationError!,
+                              style: AppTypography.caption.copyWith(
+                                color: AppColors.error,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 16),
                           Text('Choose a saving location',
                               style: AppTypography.h3),
@@ -196,7 +307,7 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
                           _DestinationTile(
                             icon: Icons.photo_library_outlined,
                             title: 'Device Gallery',
-                            subtitle: 'Pictures / GPSCamera',
+                            subtitle: AppBrand.galleryDisplayPath,
                             selected: _destination ==
                                 PhotoSaveDestination.deviceGallery,
                             onTap: () => setState(() => _destination =
@@ -225,14 +336,28 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
                                     key: ValueKey('no-project-picker'),
                                   ),
                           ),
+                          const SizedBox(height: 24),
                         ],
                       ),
                     ),
+                    if (MediaQuery.viewInsetsOf(context).bottom == 0)
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: 480,
+                          ),
+                          child: const AdBannerWidget(
+                            reserveSpaceWhileLoading: true,
+                            slotHeight: 60,
+                          ),
+                        ),
+                      ),
                     Container(
                       padding: EdgeInsets.fromLTRB(padding, 10, padding, 16),
-                      decoration: const BoxDecoration(
-                        color: AppColors.background,
-                        border: Border(top: BorderSide(color: AppColors.border)),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        border:
+                            Border(top: BorderSide(color: AppColors.border)),
                       ),
                       child: Row(
                         children: [
@@ -270,12 +395,14 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
       children: [
         Row(
           children: [
-            Expanded(child: Text('Select Project Folder', style: AppTypography.h3)),
+            Expanded(
+                child: Text('Select Project Folder', style: AppTypography.h3)),
             DropdownButton<String>(
               value: _projectFilter,
               underline: const SizedBox.shrink(),
               items: const ['Recent', 'All', 'Active', 'Archived']
-                  .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+                  .map((value) =>
+                      DropdownMenuItem(value: value, child: Text(value)))
                   .toList(),
               onChanged: (value) {
                 if (value != null) setState(() => _projectFilter = value);
@@ -286,11 +413,13 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
         const SizedBox(height: 8),
         TextField(
           controller: _searchController,
+          maxLength: AppInputLimits.search,
           decoration: InputDecoration(
             hintText: 'Search projects',
+            counterText: '',
             prefixIcon: const Icon(Icons.search),
             filled: true,
-            fillColor: AppColors.white,
+            fillColor: AppColors.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppRadius.sm),
             ),
@@ -314,11 +443,17 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
               groupValue: _selectedProjectId,
               contentPadding: EdgeInsets.zero,
               activeColor: AppColors.primary,
-              secondary: const Icon(Icons.folder_outlined),
+              controlAffinity: ListTileControlAffinity.trailing,
+              secondary: Icon(
+                Icons.folder_outlined,
+                color: Color(project.colorValue),
+              ),
               title: Text(project.name,
                   maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text('${project.photoCount} photos • ${project.location}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                  '${project.photoCount} photos • ${project.location}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
               onChanged: (value) => setState(() => _selectedProjectId = value),
             ),
           ),
@@ -330,7 +465,7 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
           style: OutlinedButton.styleFrom(
             minimumSize: const Size(double.infinity, 48),
             foregroundColor: AppColors.primary,
-            side: const BorderSide(color: AppColors.primary),
+            side: BorderSide(color: AppColors.primary),
           ),
         ),
         if (_selectedProjectId != null) ...[
@@ -339,7 +474,7 @@ class _SavePhotoToScreenState extends State<SavePhotoToScreen> {
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppColors.white,
+              color: AppColors.surface,
               border: Border.all(color: AppColors.border),
               borderRadius: BorderRadius.circular(AppRadius.sm),
             ),
@@ -372,9 +507,10 @@ class _PhotoSummary extends StatelessWidget {
     final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
     final period = date.hour >= 12 ? 'PM' : 'AM';
     return Container(
-      padding: const EdgeInsets.all(8),
+      constraints: const BoxConstraints(minHeight: 96),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppColors.white,
+        color: AppColors.surface,
         border: Border.all(color: AppColors.border),
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
@@ -384,11 +520,11 @@ class _PhotoSummary extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppRadius.sm),
             child: Image.file(
               File(imagePath),
-              width: 112,
+              width: 76,
               height: 76,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Container(
-                width: 112,
+                width: 76,
                 height: 76,
                 color: AppColors.border,
                 child: const Icon(Icons.image_outlined),
@@ -442,7 +578,7 @@ class _DestinationTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.white,
+          color: AppColors.surface,
           border: Border.all(
             color: selected ? AppColors.primary : AppColors.border,
             width: selected ? 1.5 : 1,

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/settings/photo_quality/models/photo_capture_metadata.dart';
 import '../../shared/widgets/widgets.dart';
+import '../constants/app_brand.dart';
 
 class CapturedPhoto {
   const CapturedPhoto({
@@ -70,6 +71,7 @@ class CapturedPhoto {
 
   CapturedPhoto copyWith({
     String? projectId,
+    bool clearProject = false,
     bool? isFavorite,
   }) {
     return CapturedPhoto(
@@ -79,7 +81,7 @@ class CapturedPhoto {
       capturedAt: capturedAt,
       stampData: stampData,
       captureMetadata: captureMetadata,
-      projectId: projectId ?? this.projectId,
+      projectId: clearProject ? null : projectId ?? this.projectId,
       isFavorite: isFavorite ?? this.isFavorite,
     );
   }
@@ -89,15 +91,37 @@ class CapturedPhotoService {
   CapturedPhotoService._();
 
   static const String _storageKey = 'gps_camera_captured_photos_v1';
+  static const String galleryRootAlbum = AppBrand.galleryAlbum;
+
+  static String _safeProjectFolderName(String value) {
+    final sanitized = value
+        .trim()
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '-')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'[. ]+$'), '');
+
+    if (sanitized.isEmpty) return 'Untitled Project';
+    return sanitized.length <= 60 ? sanitized : sanitized.substring(0, 60);
+  }
+
+  /// Android saves albums below the public Pictures directory.
+  /// No project: Pictures/GPS Mark/<image>
+  /// Project:    Pictures/GPS Mark/<project name>/<image>
+  static String galleryAlbum({String? projectName}) {
+    if (projectName == null || projectName.trim().isEmpty) {
+      return galleryRootAlbum;
+    }
+    return '$galleryRootAlbum/${_safeProjectFolderName(projectName)}';
+  }
 
   static Future<void> saveStampedToDeviceGallery({
     required Uint8List pngBytes,
     required String fileName,
   }) async {
-    bool hasAccess = await Gal.hasAccess();
+    bool hasAccess = await Gal.hasAccess(toAlbum: true);
 
     if (!hasAccess) {
-      hasAccess = await Gal.requestAccess();
+      hasAccess = await Gal.requestAccess(toAlbum: true);
     }
 
     if (!hasAccess) {
@@ -109,6 +133,7 @@ class CapturedPhotoService {
     await Gal.putImageBytes(
       pngBytes,
       name: fileName,
+      album: galleryRootAlbum,
     );
   }
 
@@ -131,7 +156,7 @@ class CapturedPhotoService {
     final applicationDirectory = await getApplicationDocumentsDirectory();
 
     final capturesDirectory = Directory(
-      '${applicationDirectory.path}/GPSCamera',
+      '${applicationDirectory.path}/${AppBrand.internalPhotoDirectory}',
     );
 
     if (!await capturesDirectory.exists()) {
@@ -144,7 +169,8 @@ class CapturedPhotoService {
 
     final id = capturedAt.microsecondsSinceEpoch.toString();
 
-    final destinationPath = '${capturesDirectory.path}/GPSCamera_$id.jpg';
+    final destinationPath =
+        '${capturesDirectory.path}/${AppBrand.photoFilePrefix}_$id.jpg';
 
     final destinationFile = File(
       destinationPath,
@@ -191,6 +217,7 @@ class CapturedPhotoService {
 
   static Future<void> saveToDeviceGallery({
     required String imagePath,
+    String? projectName,
   }) async {
     final file = File(
       imagePath,
@@ -207,10 +234,10 @@ class CapturedPhotoService {
       // Check permission/access
       // -----------------------------------------------------------------------
 
-      bool hasAccess = await Gal.hasAccess();
+      bool hasAccess = await Gal.hasAccess(toAlbum: true);
 
       if (!hasAccess) {
-        hasAccess = await Gal.requestAccess();
+        hasAccess = await Gal.requestAccess(toAlbum: true);
       }
 
       if (!hasAccess) {
@@ -225,6 +252,7 @@ class CapturedPhotoService {
 
       await Gal.putImage(
         file.path,
+        album: galleryAlbum(projectName: projectName),
       );
 
       print(
@@ -236,6 +264,28 @@ class CapturedPhotoService {
       );
 
       rethrow;
+    }
+  }
+
+  static Future<void> saveOriginalToDeviceGallery({
+    required String sourcePath,
+    required String fileName,
+    String? projectName,
+  }) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      throw Exception('Original photo does not exist.');
+    }
+    final temporaryDirectory = await getTemporaryDirectory();
+    final temporaryFile = File('${temporaryDirectory.path}/$fileName');
+    try {
+      await source.copy(temporaryFile.path);
+      await saveToDeviceGallery(
+        imagePath: temporaryFile.path,
+        projectName: projectName,
+      );
+    } finally {
+      if (await temporaryFile.exists()) await temporaryFile.delete();
     }
   }
 
@@ -252,7 +302,7 @@ class CapturedPhotoService {
     final applicationDirectory = await getApplicationDocumentsDirectory();
 
     final capturesDirectory = Directory(
-      '${applicationDirectory.path}/GPSCamera',
+      '${applicationDirectory.path}/${AppBrand.internalPhotoDirectory}',
     );
 
     if (!await capturesDirectory.exists()) {
@@ -264,7 +314,7 @@ class CapturedPhotoService {
     final id = capturedAt.microsecondsSinceEpoch.toString();
 
     final file = File(
-      '${capturesDirectory.path}/GPSCamera_$id.png',
+      '${capturesDirectory.path}/${AppBrand.photoFilePrefix}_$id.png',
     );
 
     await file.writeAsBytes(
@@ -303,6 +353,7 @@ class CapturedPhotoService {
     required GpsStampData stampData,
     required PhotoCaptureMetadata captureMetadata,
     String? projectId,
+    String? fileName,
   }) async {
     final sourceFile = File(sourcePath);
 
@@ -312,7 +363,7 @@ class CapturedPhotoService {
 
     final applicationDirectory = await getApplicationDocumentsDirectory();
     final capturesDirectory = Directory(
-      '${applicationDirectory.path}/GPSCamera',
+      '${applicationDirectory.path}/${AppBrand.internalPhotoDirectory}',
     );
 
     if (!await capturesDirectory.exists()) {
@@ -321,9 +372,10 @@ class CapturedPhotoService {
 
     final id = capturedAt.microsecondsSinceEpoch.toString();
     final extension = sourcePath.split('.').last.toLowerCase();
-    final destinationFile = File(
-      '${capturesDirectory.path}/GPSCamera_$id.$extension',
-    );
+    final resolvedName = (fileName == null || fileName.trim().isEmpty)
+        ? '${AppBrand.photoFilePrefix}_$id.$extension'
+        : fileName;
+    final destinationFile = File('${capturesDirectory.path}/$resolvedName');
 
     await sourceFile.copy(destinationFile.path);
 
@@ -483,6 +535,17 @@ class CapturedPhotoService {
     }).toList();
     await _write(updated);
     return moved;
+  }
+
+  static Future<void> clearProjectAssignment(String projectId) async {
+    final photos = await loadPhotos();
+    var changed = false;
+    final updated = photos.map((photo) {
+      if (photo.projectId != projectId) return photo;
+      changed = true;
+      return photo.copyWith(clearProject: true);
+    }).toList();
+    if (changed) await _write(updated);
   }
 
   // ===========================================================================

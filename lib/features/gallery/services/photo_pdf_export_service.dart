@@ -14,6 +14,7 @@ class PhotoPdfExportService {
   static Future<File> createStampedPhotoPdf({
     required ResolvedPhotoContent content,
     required DateTime capturedAt,
+    String? projectName,
     int? imageWidth,
     int? imageHeight,
   }) async {
@@ -37,10 +38,12 @@ class PhotoPdfExportService {
     );
 
     final temporaryDirectory = await getTemporaryDirectory();
-    final id = capturedAt.microsecondsSinceEpoch;
-    final output = File(
-      '${temporaryDirectory.path}/GPSCamera_Report_$id.pdf',
-    );
+    final timestamp = _formatTimestamp(DateTime.now());
+    final normalizedProjectName = _sanitizeProjectName(projectName);
+    final fileName = normalizedProjectName == null
+        ? 'GPSMark_$timestamp.pdf'
+        : 'GPSMark_${normalizedProjectName}_$timestamp.pdf';
+    final output = File('${temporaryDirectory.path}/$fileName');
 
     await output.writeAsBytes(await document.save(), flush: true);
 
@@ -49,6 +52,28 @@ class PhotoPdfExportService {
     }
 
     return output;
+  }
+
+  static String? _sanitizeProjectName(String? value) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+
+    final sanitized = trimmed
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return sanitized.isEmpty ? null : sanitized;
+  }
+
+  static String _formatTimestamp(DateTime value) {
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+
+    return '${value.year.toString().padLeft(4, '0')}'
+        '${twoDigits(value.month)}'
+        '${twoDigits(value.day)}_'
+        '${twoDigits(value.hour)}'
+        '${twoDigits(value.minute)}'
+        '${twoDigits(value.second)}';
   }
 
   static Future<Uint8List> _readPdfCompatibleImage(

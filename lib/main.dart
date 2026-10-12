@@ -1,17 +1,17 @@
-
-
+import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-import 'package:firebase_core/firebase_core.dart'
-    as firebase_core;
+import 'package:firebase_core/firebase_core.dart' as firebase_core;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
+import 'core/services/ad_service.dart';
 import 'core/services/firebase_service.dart';
+import 'core/services/firebase_monitoring_service.dart';
 
 // =============================================================================
 // FCM BACKGROUND HANDLER
@@ -40,12 +40,10 @@ import 'core/services/firebase_service.dart';
 // - data-only FCM handling
 //
 @pragma('vm:entry-point')
-Future<void>
-    firebaseMessagingBackgroundHandler(
+Future<void> firebaseMessagingBackgroundHandler(
   RemoteMessage message,
 ) async {
-  await firebase_core.Firebase
-      .initializeApp();
+  await firebase_core.Firebase.initializeApp();
 
   debugPrint(
     '📩 BACKGROUND/TERMINATED FCM RECEIVED',
@@ -73,8 +71,7 @@ Future<void>
 // =============================================================================
 
 Future<void> main() async {
-  WidgetsFlutterBinding
-      .ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized();
 
   // Keep every app screen in portrait. The camera module reads the physical
   // device orientation separately, so only its stamp/brightness overlays can
@@ -99,15 +96,22 @@ Future<void> main() async {
 
   await FirebaseService.initialize();
 
-  // ---------------------------------------------------------------------------
-  // START APP
-  // ---------------------------------------------------------------------------
+  // Crash reporting and Analytics depend on the default Firebase app. Keep
+  // startup resilient if Firebase configuration is unavailable.
+  if (FirebaseService.isInitialized) {
+    await FirebaseMonitoringService.initialize();
+  }
 
+  // Start the Flutter UI before initializing AdMob. Waiting for the ads SDK
+  // here can leave Android's native splash visible for several seconds.
   runApp(
     const ProviderScope(
-      child: GPSCameraApp(),
+      child: GPSMark(),
     ),
   );
+
+  // AdMob initialization is independent of the first Flutter frame.
+  unawaited(AdService.instance.initialize());
 
   // ---------------------------------------------------------------------------
   // TERMINATED NOTIFICATION TAP
@@ -115,11 +119,9 @@ Future<void> main() async {
   //
   // run after application initialization so your app/navigation tree exists.
 
-  WidgetsBinding.instance
-      .addPostFrameCallback(
+  WidgetsBinding.instance.addPostFrameCallback(
     (_) async {
-      await FirebaseService
-          .handleInitialMessage();
+      await FirebaseService.handleInitialMessage();
     },
   );
 }

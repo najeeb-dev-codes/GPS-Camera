@@ -6,12 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../features/home/home_screen.dart';
+import '../navigation/app_navigator.dart';
 import '../../features/permission/camera_access_screen.dart';
 import '../../features/permission/location_access_screen.dart';
 import '../../features/permission/notification_access_screen.dart';
+import '../../features/permission/permission_page_route.dart';
 import '../../features/permission/photos_media_access_screen.dart';
-import '../../features/permission/permission_required_screen.dart';
 import '../../features/permission/permission_screen.dart';
 import '../../features/permission/permissions_enabled_screen.dart';
 import 'device_registration_service.dart';
@@ -20,13 +20,31 @@ import 'device_registration_service.dart';
 /// (Camera -> Location -> Photos -> Notifications).
 enum PermissionStep { camera, location, photos, notifications }
 
+/// Permissions managed from the Settings > Permissions screen.
+enum ManagedAppPermission { camera, location, gallery, notifications }
+
 /// Central place for everything related to runtime permissions:
 /// checking status, requesting permissions, and deciding where the
 /// permission flow should go next.
 class PermissionFlowService {
   PermissionFlowService._();
 
+  static const List<ManagedAppPermission> requiredPermissions =
+      <ManagedAppPermission>[
+    ManagedAppPermission.camera,
+    ManagedAppPermission.location,
+    ManagedAppPermission.gallery,
+  ];
+
+  static const List<ManagedAppPermission> onboardingPermissions =
+      <ManagedAppPermission>[
+    ...requiredPermissions,
+    ManagedAppPermission.notifications,
+  ];
+
   static const String _onboardedKey = 'permission_onboarding_completed';
+  static const String _onboardingStartedKey =
+      'permission_onboarding_started';
 
   // ---------------------------------------------------------------------
   // ONBOARDING COMPLETION FLAG
@@ -36,7 +54,7 @@ class PermissionFlowService {
   // flow yet" from "went through it before, but a permission was later
   // revoked in system Settings". AppLaunchGate uses this to decide
   // whether to show WelcomeScreen (first case) or jump straight into
-  // PermissionRequiredScreen (second case).
+  // the missing-permission version of PermissionScreen (second case).
   //
   // NOTE: an app uninstall/reinstall clears app storage (and OS resets
   // permission grants too), so this flag naturally resets to "false"
@@ -48,12 +66,57 @@ class PermissionFlowService {
   /// right when the user first reaches [PermissionsEnabledScreen].
   static Future<void> markOnboardingCompleted() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_onboardingStartedKey, true);
     await prefs.setBool(_onboardedKey, true);
+  }
+
+  /// Records that the user has left Welcome and entered the permission flow.
+  /// This lets a later cold start resume at Permission Required instead of
+  /// showing Welcome again when onboarding was closed before every required
+  /// permission had been granted.
+  static Future<void> markOnboardingStarted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_onboardingStartedKey, true);
   }
 
   static Future<bool> hasCompletedOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_onboardedKey) ?? false;
+  }
+
+  /// Completes the first permission setup and opens the correct destination.
+  ///
+  /// The very first successful grant goes directly to Camera. Once that
+  /// first setup has been completed, any later recovery after a permission
+  /// was revoked goes to PermissionsEnabledScreen instead.
+  static Future<void> completeRequiredPermissionFlow(
+    BuildContext context,
+  ) async {
+    final alreadyCompleted = await hasCompletedOnboarding();
+
+    if (!context.mounted) return;
+
+    await markOnboardingCompleted();
+
+    if (!context.mounted) return;
+
+    if (!alreadyCompleted) {
+      AppNavigator.goToCameraAfterPermissionOnboarding(context);
+      return;
+    }
+
+    await Navigator.of(context).pushAndRemoveUntil(
+      buildPermissionPageRoute<void>(
+        const PermissionsEnabledScreen(),
+      ),
+      (route) => false,
+    );
+  }
+
+  static Future<bool> hasEnteredPermissionFlow() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getBool(_onboardingStartedKey) ?? false) ||
+        (prefs.getBool(_onboardedKey) ?? false);
   }
 
   // ---------------------------------------------------------------------
@@ -117,6 +180,87 @@ class PermissionFlowService {
     return (await Permission.notification.status).isGranted;
   }
 
+  /// Requests one permission through the operating system runtime-permission
+  /// API and returns its refreshed granted state. This method never opens App
+  /// Settings when a grant request is denied.
+  static Future<bool> requestPermission(
+    ManagedAppPermission permission,
+  ) async {
+    await (await _permissionFor(permission)).request();
+
+    unawaited(DeviceRegistrationService.registerAfterPermissionsChanged());
+
+    return switch (permission) {
+      ManagedAppPermission.camera => isCameraGranted(),
+      ManagedAppPermission.location => isLocationGranted(),
+      ManagedAppPermission.gallery => isPhotosGranted(),
+      ManagedAppPermission.notifications => isNotificationGranted(),
+    };
+  }
+
+  static Future<Permission> _permissionFor(
+    ManagedAppPermission permission,
+  ) async {
+    switch (permission) {
+      case ManagedAppPermission.camera:
+        return Permission.camera;
+      case ManagedAppPermission.location:
+        return Permission.locationWhenInUse;
+      case ManagedAppPermission.gallery:
+        return _resolvePhotoPermission();
+      case ManagedAppPermission.notifications:
+        return Permission.notification;
+    }
+  }
+
+  /// True after an earlier denial when Android recommends explaining why the
+  /// permission is needed before showing the OS dialog again.
+  static Future<bool> shouldShowRequestWarning(
+    ManagedAppPermission permission,
+  ) async {
+    final platformPermission = await _permissionFor(permission);
+    final status = await platformPermission.status;
+    if (status.isGranted || status.isLimited || status.isPermanentlyDenied) {
+      return false;
+    }
+    return platformPermission.shouldShowRequestRationale;
+  }
+
+  static Future<bool> isPermanentlyDenied(
+    ManagedAppPermission permission,
+  ) async {
+    return (await (await _permissionFor(permission)).status)
+        .isPermanentlyDenied;
+  }
+
+  static Future<List<ManagedAppPermission>> permanentlyDeniedPermissions(
+    Iterable<ManagedAppPermission> permissions,
+  ) async {
+    final blocked = <ManagedAppPermission>[];
+    for (final permission in permissions) {
+      if (await isPermanentlyDenied(permission)) {
+        blocked.add(permission);
+      }
+    }
+    return blocked;
+  }
+
+  static Future<List<ManagedAppPermission>> permissionsNeedingWarning(
+    Iterable<ManagedAppPermission> permissions,
+  ) async {
+    final warnings = <ManagedAppPermission>[];
+    for (final permission in permissions) {
+      if (await shouldShowRequestWarning(permission)) {
+        warnings.add(permission);
+      }
+    }
+    return warnings;
+  }
+
+  /// Mobile operating systems do not allow an app to revoke its own runtime
+  /// permissions. Revocation must be completed by the user in system settings.
+  static Future<bool> openSystemSettings() => openAppSettings();
+
   /// Camera, Location and Photos are required for the app to function.
   /// Notifications is recommended only and is NOT part of this check.
   static Future<bool> allRequiredGranted() async {
@@ -133,10 +277,9 @@ class PermissionFlowService {
   /// Requests Camera, Location, Photos and Notifications together.
   ///
   /// Used when the user taps "Allow & Continue" instead of granting
-  /// each permission one by one. Permissions that are already granted
-  /// are skipped by `permission_handler` automatically. Notifications
-  /// is requested too (best-effort) but never blocks the required
-  /// permissions from being reported as satisfied.
+  /// each permission one by one. Permissions that are already granted are
+  /// skipped by `permission_handler` automatically. Notification permission
+  /// remains optional, but its OS prompt is included in this button's sequence.
   static Future<bool> requestAllRequired() async {
     final photoPermission = await _resolvePhotoPermission();
 
@@ -146,9 +289,11 @@ class PermissionFlowService {
       photoPermission,
     ].request();
 
-    // Best-effort — do not let a denied notification permission affect
-    // the "required" result below.
-    await Permission.notification.request();
+    // Notifications are optional for app entry, but Allow & Continue must
+    // still request them when they have not been granted.
+    if (!(await Permission.notification.status).isGranted) {
+      await Permission.notification.request();
+    }
 
     final granted = await allRequiredGranted();
 
@@ -161,27 +306,38 @@ class PermissionFlowService {
     return granted;
   }
 
+  /// Re-requests only the required permissions that are still missing.
+  /// Used by Permission Required recovery so an optional notification denial
+  /// is not requested again while the user is repairing required access.
+  static Future<bool> requestMissingRequired() async {
+    final photoPermission = await _resolvePhotoPermission();
+
+    await [
+      Permission.camera,
+      Permission.locationWhenInUse,
+      photoPermission,
+    ].request();
+
+    final granted = await allRequiredGranted();
+    unawaited(DeviceRegistrationService.registerAfterPermissionsChanged());
+    return granted;
+  }
+
   // ---------------------------------------------------------------------
   // ENTRY POINT (used by WelcomeScreen's "Get Started" button)
   // ---------------------------------------------------------------------
 
   /// Called when the user taps "Get Started" on [WelcomeScreen].
   ///
-  /// - If every required permission is already granted (edge case, e.g.
-  ///   the user backed into Welcome after already onboarding), skip
-  ///   straight to [HomeScreen].
-  /// - Otherwise, go to [PermissionScreen] so the user can grant
-  ///   permissions individually or via "Allow & Continue".
+  /// Welcome always enters [PermissionScreen]. The launch gate is solely
+  /// responsible for sending an already-configured user directly to Home.
   static Future<void> startFlow(BuildContext context) async {
-    final granted = await allRequiredGranted();
+    await markOnboardingStarted();
 
     if (!context.mounted) return;
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) =>
-            granted ? const HomeScreen() : const PermissionScreen(),
-      ),
+    await Navigator.of(context).push<void>(
+      buildPermissionPageRoute<void>(const PermissionScreen()),
     );
   }
 
@@ -193,7 +349,7 @@ class PermissionFlowService {
   /// Moves the one-at-a-time onboarding flow forward from [from] to the
   /// next step. After the last step (Notifications), checks whether every
   /// required permission ended up granted and routes to
-  /// [PermissionsEnabledScreen] or [PermissionRequiredScreen] accordingly.
+  /// [PermissionsEnabledScreen] or the missing-permission center accordingly.
   static Future<void> advance(
     BuildContext context, {
     required PermissionStep from,
@@ -230,18 +386,20 @@ class PermissionFlowService {
 
       if (!context.mounted) return;
 
-      await Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => granted
-              ? const PermissionsEnabledScreen()
-              : const PermissionRequiredScreen(),
-        ),
-      );
+      if (granted) {
+        await completeRequiredPermissionFlow(context);
+      } else {
+        await Navigator.of(context).pushReplacement(
+          buildPermissionPageRoute<void>(
+            const PermissionScreen(showOnlyMissing: true),
+          ),
+        );
+      }
       return;
     }
 
     await Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => next!),
+      buildPermissionPageRoute<void>(next!),
     );
   }
 }

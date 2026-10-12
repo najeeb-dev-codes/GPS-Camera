@@ -3,17 +3,18 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/constants/project_cover_layout.dart';
 import '../../core/navigation/app_navigator.dart';
+import '../../core/services/ad_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
-import '../camera/live_camera_screen.dart';
-import '../gallery/photo_details_screen.dart';
 import 'create_project_screen.dart';
 import 'project_data.dart';
 import 'project_export_service.dart';
-import 'project_map_panel.dart';
+import 'project_locations_screen.dart';
+import 'project_photos_screen.dart';
 
 class ProjectDetailsScreen extends StatefulWidget {
   const ProjectDetailsScreen({super.key, required this.projectId});
@@ -26,9 +27,9 @@ class ProjectDetailsScreen extends StatefulWidget {
 
 class _ProjectDetailsScreenState extends State<ProjectDetailsScreen> {
   final ProjectRepository _repository = ProjectRepository.instance;
-  int _tabIndex = 0;
   bool _loading = true;
-  bool _busy = false;
+  bool _exporting = false;
+  bool _deleting = false;
 
   ProjectData? get _project => _repository.findById(widget.projectId);
 
@@ -61,9 +62,22 @@ class _ProjectDetailsScreenState extends State<ProjectDetailsScreen> {
   }
 
   Future<void> _export(ProjectData project) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+    if (_exporting) return;
+
+    if (project.photos.isEmpty) {
+      AppTopToast.show(
+        context,
+        message: 'Add at least one photo to this project before exporting.',
+        icon: Icons.info_outline_rounded,
+      );
+      return;
+    }
+
+    setState(() => _exporting = true);
     try {
+      await AdService.instance.showInterstitialIfReady();
+      if (!mounted) return;
+
       final report = await ProjectExportService.createReport(project);
       await SharePlus.instance.share(
         ShareParams(
@@ -74,47 +88,81 @@ class _ProjectDetailsScreenState extends State<ProjectDetailsScreen> {
         ),
       );
     } catch (error) {
-      _showError(error);
+      if (mounted) {
+        AppTopToast.show(
+          context,
+          message: 'Unable to export project: $error',
+          icon: Icons.error_outline_rounded,
+        );
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _exporting = false);
     }
-  }
-
-  Future<void> _share(ProjectData project) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      final files = project.photos
-          .map((photo) => File(photo.path))
-          .where((file) => file.existsSync())
-          .map((file) => XFile(file.path))
-          .toList();
-      await SharePlus.instance.share(
-        ShareParams(
-          title: project.name,
-          subject: '${project.name} project',
-          text: '${project.name}\n${project.location}\n'
-              '${project.photoCount} photos • ${project.storageLabel}',
-          files: files,
-        ),
-      );
-    } catch (error) {
-      _showError(error);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  void _showError(Object error) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Unable to complete action: $error')),
-    );
   }
 
   Future<void> _toggleArchive(ProjectData project) async {
+    final willArchive = project.status != ProjectStatus.archived;
     await _repository.toggleArchive(project);
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    AppTopToast.show(
+      context,
+      message: willArchive
+          ? 'Project “${project.name}” archived.'
+          : 'Project “${project.name}” restored.',
+      icon: willArchive
+          ? Icons.archive_outlined
+          : Icons.unarchive_outlined,
+      backgroundColor: willArchive ? Colors.orange : Colors.green,
+    );
+  }
+
+  Future<void> _deleteProject(ProjectData project) async {
+    if (_deleting) return;
+    final confirmed = await showDeleteConfirmationDialog(
+      context,
+      title: 'Delete project?',
+      message: '“${project.name}” will be permanently deleted. Its captured '
+          'photos will remain available in the main Gallery.',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      await _repository.delete(project.id);
+      if (!mounted) return;
+      AppTopToast.show(
+        context,
+        message: 'Project “${project.name}” deleted.',
+        icon: Icons.delete_outline_rounded,
+        backgroundColor: Colors.red,
+      );
+      AppNavigator.goToProjects(context);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _deleting = false);
+      AppTopToast.show(
+        context,
+        message: 'Unable to delete project: $error',
+        icon: Icons.error_outline_rounded,
+        backgroundColor: Colors.red,
+      );
+    }
+  }
+
+  void _openPhotos(ProjectData project) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProjectPhotosScreen(projectId: project.id),
+      ),
+    );
+  }
+
+  void _openLocations(ProjectData project) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProjectLocationsScreen(projectId: project.id),
+      ),
+    );
   }
 
   @override
@@ -134,127 +182,118 @@ class _ProjectDetailsScreenState extends State<ProjectDetailsScreen> {
     }
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final wide = constraints.maxWidth >= 700;
+            final padding = wide ? 32.0 : AppSpacing.screenPadding;
+            final contentWidth = constraints.maxWidth > 900
+                ? 900.0
+                : constraints.maxWidth;
+            final coverHeight =
+                contentWidth / ProjectCoverLayout.aspectRatio;
+            final actionCardHeight = wide ? 116.0 : 104.0;
             return Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 950),
-                child: Column(
-                  children: [
-                    _ProjectHero(
-                      project: project,
-                      height: wide ? 250 : 185,
-                      onBack: () => Navigator.of(context).pop(),
-                      onEdit: () => _edit(project),
-                      onArchive: () => _toggleArchive(project),
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: coverHeight + (actionCardHeight / 2),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              height: coverHeight,
+                              child: _ProjectCover(
+                                project: project,
+                                height: coverHeight,
+                                onBack: () => Navigator.of(context).pop(),
+                                onEdit: () => _edit(project),
+                                onArchive: () => _toggleArchive(project),
+                                onDelete: () => _deleteProject(project),
+                                deleting: _deleting,
+                              ),
+                            ),
+                            Positioned(
+                              top: coverHeight - (actionCardHeight / 2),
+                              left: padding,
+                              right: padding,
+                              height: actionCardHeight,
+                              child: _ProjectActionsCard(
+                                photoCount: project.photoCount,
+                                locationCount: project.locationCount,
+                                exporting: _exporting,
+                                onPhotos: () => _openPhotos(project),
+                                onLocations: () => _openLocations(project),
+                                onExport: () => _export(project),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    Expanded(
-                      child: Column(
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        padding,
+                        24,
+                        padding,
+                        28,
+                      ),
+                      sliver: SliverList.list(
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(
-                              AppSpacing.screenPadding,
-                              14,
-                              AppSpacing.screenPadding,
-                              8,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(project.name,
-                                          style: AppTypography.h2),
-                                    ),
-                                    _StatusBadge(status: project.status),
-                                  ],
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Icon(
+                                  Icons.folder,
+                                  size: 24,
+                                  color: Color(project.colorValue),
                                 ),
-                                const SizedBox(height: 5),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.location_on_outlined,
-                                        size: 17,
-                                        color: AppColors.textSecondary),
-                                    const SizedBox(width: 4),
-                                    Expanded(
-                                      child: Text(project.location,
-                                          style: AppTypography.caption.copyWith(
-                                              color: AppColors.textSecondary)),
-                                    ),
-                                  ],
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  project.name,
+                                  style: AppTypography.h2,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    _Metric(Icons.photo_library_outlined,
-                                        '${project.photoCount}', 'Photos'),
-                                    _Metric(Icons.location_on_outlined,
-                                        '${project.locationCount}', 'Locations'),
-                                    _Metric(Icons.storage_outlined,
-                                        project.storageLabel, 'Storage'),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _ActionButton(
-                                        label: 'Open Camera',
-                                        icon: Icons.camera_alt_outlined,
-                                        primary: true,
-                                        onTap: _busy
-                                            ? null
-                                            : () => Navigator.of(context).push(
-                                                  MaterialPageRoute(
-                                                    builder: (_) =>
-                                                        LiveCameraScreen(
-                                                      initialProjectId:
-                                                          project.id,
-                                                    ),
-                                                  ),
-                                                ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: _ActionButton(
-                                        label: 'Export',
-                                        icon: Icons.picture_as_pdf_outlined,
-                                        onTap: _busy ? null : () => _export(project),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: _ActionButton(
-                                        label: 'Share Project',
-                                        icon: Icons.share_outlined,
-                                        onTap: _busy ? null : () => _share(project),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                AppTabSelector(
-                                  tabs: const ['Gallery', 'Map', 'Details'],
-                                  selectedIndex: _tabIndex,
-                                  onChanged: (index) =>
-                                      setState(() => _tabIndex = index),
-                                  scrollable: false,
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          Expanded(
-                            child: switch (_tabIndex) {
-                              0 => _ProjectGallery(project: project, wide: wide),
-                              1 => ProjectMapPanel(photos: project.photos),
-                              _ => _DetailsPanel(project: project),
-                            },
+                          const SizedBox(height: 5),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.location_on,
+                                size: 24,
+                                color: Color(project.colorValue),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  project.location,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTypography.bodyMedium.copyWith(
+                                    color: AppColors.textSecondary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 24),
+                          _ProjectInformation(project: project),
                         ],
                       ),
                     ),
@@ -265,21 +304,29 @@ class _ProjectDetailsScreenState extends State<ProjectDetailsScreen> {
           },
         ),
       ),
-      bottomNavigationBar: AppBottomNavBar(
-        currentIndex: 3,
-        onTap: (index) => AppNavigator.handleBottomNavTap(context, index),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const AdBannerWidget(),
+          AppBottomNavBar(
+            currentIndex: 3,
+            onTap: (index) => AppNavigator.handleBottomNavTap(context, index),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _ProjectHero extends StatelessWidget {
-  const _ProjectHero({
+class _ProjectCover extends StatelessWidget {
+  const _ProjectCover({
     required this.project,
     required this.height,
     required this.onBack,
     required this.onEdit,
     required this.onArchive,
+    required this.onDelete,
+    required this.deleting,
   });
 
   final ProjectData project;
@@ -287,23 +334,52 @@ class _ProjectHero extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
+  final VoidCallback onDelete;
+  final bool deleting;
 
   @override
   Widget build(BuildContext context) {
-    final recent = project.recentPhoto;
+    final path = project.coverImagePath;
+    final available = path != null &&
+        !isGeneratedProjectNameCover(path) && File(path).existsSync();
     return SizedBox(
       height: height,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (recent != null && File(recent.path).existsSync())
-            Image.file(File(recent.path), fit: BoxFit.cover)
+          if (available)
+            ColoredBox(
+              color: AppColors.mutedSurface,
+              child: Image.file(
+                File(path!),
+                fit: BoxFit.cover,
+                alignment: Alignment.center,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    size: 72,
+                    color: AppColors.neutral400,
+                  ),
+                ),
+              ),
+            )
           else
             Container(
-              color: project.color.withValues(alpha: 0.20),
+              color: Color(project.colorValue),
               alignment: Alignment.center,
-              child: Icon(Icons.folder_outlined,
-                  color: project.color, size: 72),
+              child: Text(
+                _projectInitials(project.name),
+                maxLines: 1,
+                overflow: TextOverflow.clip,
+                style: TextStyle(
+                  fontSize: 56,
+                  fontWeight: FontWeight.w700,
+                  color: project.colorValue == 0xFFFFFFFF
+                      ? Colors.black
+                      : Colors.white,
+                ),
+              ),
             ),
           const DecoratedBox(
             decoration: BoxDecoration(
@@ -326,13 +402,14 @@ class _ProjectHero extends StatelessWidget {
             top: 4,
             right: 4,
             child: PopupMenuButton<String>(
-              color: AppColors.white,
+              color: AppColors.surface,
               icon: const Icon(Icons.more_vert, color: Colors.white),
               onSelected: (value) {
                 if (value == 'edit') onEdit();
                 if (value == 'archive') onArchive();
+                if (value == 'delete') onDelete();
               },
-              itemBuilder: (_) => <PopupMenuEntry<String>>[
+              itemBuilder: (_) => [
                 const PopupMenuItem(
                   value: 'edit',
                   child: ListTile(
@@ -343,12 +420,30 @@ class _ProjectHero extends StatelessWidget {
                 PopupMenuItem(
                   value: 'archive',
                   child: ListTile(
-                    leading: Icon(project.status == ProjectStatus.active
-                        ? Icons.archive_outlined
-                        : Icons.unarchive_outlined),
-                    title: Text(project.status == ProjectStatus.active
-                        ? 'Archive'
-                        : 'Restore Project'),
+                    leading: Icon(
+                      project.status == ProjectStatus.active
+                          ? Icons.archive_outlined
+                          : Icons.unarchive_outlined,
+                    ),
+                    title: Text(
+                      project.status == ProjectStatus.active
+                          ? 'Archive'
+                          : 'Restore Project',
+                    ),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  enabled: !deleting,
+                  child: const ListTile(
+                    leading: Icon(
+                      Icons.delete_outline_rounded,
+                      color: AppColors.error,
+                    ),
+                    title: Text(
+                      'Delete Project',
+                      style: TextStyle(color: AppColors.error),
+                    ),
                   ),
                 ),
               ],
@@ -360,209 +455,166 @@ class _ProjectHero extends StatelessWidget {
   }
 }
 
-class _ProjectGallery extends StatelessWidget {
-  const _ProjectGallery({required this.project, required this.wide});
+class _ProjectActionsCard extends StatelessWidget {
+  const _ProjectActionsCard({
+    required this.photoCount,
+    required this.locationCount,
+    required this.exporting,
+    required this.onPhotos,
+    required this.onLocations,
+    required this.onExport,
+  });
 
-  final ProjectData project;
-  final bool wide;
+  final int photoCount;
+  final int locationCount;
+  final bool exporting;
+  final VoidCallback onPhotos;
+  final VoidCallback onLocations;
+  final VoidCallback onExport;
 
   @override
   Widget build(BuildContext context) {
-    if (project.photos.isEmpty) {
-      return const EmptyStatePlaceholder(
-        icon: Icons.photo_library_outlined,
-        title: 'No project photos',
-        description: 'Open the camera and save a photo to this project.',
-      );
-    }
-    return GridView.builder(
-      padding: const EdgeInsets.all(AppSpacing.screenPadding),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: wide ? 4 : 3,
-        mainAxisSpacing: 6,
-        crossAxisSpacing: 6,
-        childAspectRatio: 0.9,
-      ),
-      itemCount: project.photos.length,
-      itemBuilder: (context, index) {
-        final photo = project.photos[index];
-        return InkWell(
-          onTap: () async {
-            final deleted = await Navigator.of(context).push<bool>(
-              MaterialPageRoute(builder: (_) => PhotoDetailsScreen(photo: photo)),
-            );
-            if (deleted == true) {
-              await ProjectRepository.instance.ensureLoaded(refreshPhotos: true);
-            }
-          },
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.sm),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.file(
-                  File(photo.path),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: AppColors.border,
-                    child: const Icon(Icons.image_outlined),
-                  ),
-                ),
-                const Positioned(
-                  top: 5,
-                  right: 5,
-                  child: _GpsBadge(),
-                ),
-              ],
+    return Material(
+      color: AppColors.surface,
+      elevation: 8,
+      shadowColor: Colors.black26,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      clipBehavior: Clip.antiAlias,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            _ProjectAction(
+              icon: Icons.photo_library_outlined,
+              value: 'Photos ($photoCount)',
+              onTap: onPhotos,
             ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _Metric extends StatelessWidget {
-  const _Metric(this.icon, this.value, this.label);
-  final IconData icon;
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        children: [
-          Icon(icon, color: AppColors.textSecondary, size: 22),
-          const SizedBox(height: 4),
-          FittedBox(
-            child: Text(value,
-                style: AppTypography.bodyMedium
-                    .copyWith(fontWeight: FontWeight.w700)),
-          ),
-          Text(label,
-              style: AppTypography.caption
-                  .copyWith(color: AppColors.textSecondary)),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
-  final ProjectStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final active = status == ProjectStatus.active;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: active ? const Color(0xFFDDF7E5) : AppColors.border,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        active ? '✓ Active' : 'Archived',
-        style: TextStyle(
-          color: active ? const Color(0xFF137A36) : AppColors.textSecondary,
-          fontWeight: FontWeight.w700,
-          fontSize: 12,
+            VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: AppColors.border,
+            ),
+            _ProjectAction(
+              icon: Icons.location_on_outlined,
+              value: 'Locations ($locationCount)',
+              onTap: onLocations,
+            ),
+            VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: AppColors.border,
+            ),
+            _ProjectAction(
+              icon: Icons.picture_as_pdf_outlined,
+              value: 'Export',
+              busy: exporting,
+              onTap: exporting ? null : onExport,
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _ActionButton extends StatelessWidget {
-  const _ActionButton({
-    required this.label,
+class _ProjectAction extends StatelessWidget {
+  const _ProjectAction({
     required this.icon,
-    required this.onTap,
-    this.primary = false,
+    required this.value,
+    this.busy = false,
+    this.onTap,
   });
-  final String label;
+
   final IconData icon;
+  final String value;
+  final bool busy;
   final VoidCallback? onTap;
-  final bool primary;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 48,
-      child: primary
-          ? ElevatedButton.icon(
-              onPressed: onTap,
-              icon: Icon(icon, size: 18),
-              label: FittedBox(child: Text(label)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.white,
-              ),
-            )
-          : OutlinedButton.icon(
-              onPressed: onTap,
-              icon: Icon(icon, size: 18),
-              label: FittedBox(child: Text(label)),
-            ),
-    );
-  }
-}
-
-class _GpsBadge extends StatelessWidget {
-  const _GpsBadge();
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFFDDF7E5),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: const Text('GPS',
-          style: TextStyle(
-              color: Color(0xFF137A36),
-              fontSize: 9,
-              fontWeight: FontWeight.w700)),
-    );
-  }
-}
-
-class _DetailsPanel extends StatelessWidget {
-  const _DetailsPanel({required this.project});
-  final ProjectData project;
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.screenPadding),
-      children: <MapEntry<String, String>>[
-        MapEntry('Project code', project.code),
-        MapEntry('Client / Company', project.client),
-        MapEntry('Location', project.location),
-        MapEntry('Stamp template', project.defaultStampTemplate),
-        MapEntry('Description',
-            project.description.isEmpty ? 'No description' : project.description),
-      ]
-          .map((entry) => Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.white,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  border: Border.all(color: AppColors.border),
+    final color = Theme.of(context).colorScheme.primary;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (busy)
+                SizedBox(
+                  width: 23,
+                  height: 23,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    color: color,
+                  ),
+                )
+              else
+                Icon(icon, color: color, size: 25),
+              const SizedBox(height: 5),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  busy ? 'Exporting' : value,
+                  maxLines: 1,
+                  style: AppTypography.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectInformation extends StatelessWidget {
+  const _ProjectInformation({required this.project});
+
+  final ProjectData project;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <MapEntry<String, String>>[
+      MapEntry('Project code', project.code),
+      MapEntry('Client / Company', project.client),
+      MapEntry('Location', project.location),
+      MapEntry(
+        'Description',
+        project.description.isEmpty ? 'No description' : project.description,
+      ),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Column(
+        children: rows
+            .map(
+              (entry) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 7),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       flex: 2,
-                      child: Text(entry.key,
-                          style: AppTypography.caption.copyWith(
-                            color: AppColors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                          )),
+                      child: Text(
+                        entry.key,
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       flex: 3,
                       child: Text(
@@ -573,8 +625,26 @@ class _DetailsPanel extends StatelessWidget {
                     ),
                   ],
                 ),
-              ))
-          .toList(),
+              ),
+            )
+            .toList(),
+      ),
     );
   }
+}
+
+String _projectInitials(String name) {
+  final words = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .toList();
+  if (words.isEmpty) return 'P';
+  if (words.length == 1) {
+    return String.fromCharCodes(words.first.runes.take(2)).toUpperCase();
+  }
+  return words
+      .take(2)
+      .map((word) => String.fromCharCode(word.runes.first).toUpperCase())
+      .join();
 }

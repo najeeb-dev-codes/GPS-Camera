@@ -16,6 +16,21 @@ class ProjectExportService {
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
         build: (_) => <pw.Widget>[
+          if (project.coverImagePath != null &&
+              File(project.coverImagePath!).existsSync()) ...<pw.Widget>[
+            pw.Container(
+              height: 220,
+              width: double.infinity,
+              alignment: pw.Alignment.center,
+              child: pw.Image(
+                pw.MemoryImage(File(project.coverImagePath!).readAsBytesSync()),
+                // Keep the complete cover visible for portrait and landscape
+                // images. `cover` cropped the top and bottom of the photo.
+                fit: pw.BoxFit.contain,
+              ),
+            ),
+            pw.SizedBox(height: 16),
+          ],
           pw.Text(project.name,
               style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
           pw.SizedBox(height: 8),
@@ -30,7 +45,6 @@ class ProjectExportService {
               <String>['Locations', '${project.locationCount}'],
               <String>['Storage', project.storageLabel],
               <String>['Status', project.status.name],
-              <String>['Stamp template', project.defaultStampTemplate],
             ],
           ),
           if (project.description.trim().isNotEmpty) ...<pw.Widget>[
@@ -49,7 +63,7 @@ class ProjectExportService {
               (photo) => pw.Padding(
                 padding: const pw.EdgeInsets.only(bottom: 5),
                 child: pw.Text(
-                  '${photo.capturedAt.toLocal()}  •  ${photo.location}',
+                  '${photo.capturedAt.toLocal()}  ${photo.location}',
                 ),
               ),
             ),
@@ -66,25 +80,17 @@ class ProjectExportService {
       document.addPage(
         pw.Page(
           pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(28),
+          margin: const pw.EdgeInsets.all(20),
           build: (_) => pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(
-                '${project.name} • Photo ${index + 1} of ${project.photoCount}',
-                style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold),
-              ),
-              pw.SizedBox(height: 10),
+            children: <pw.Widget>[
               pw.Expanded(
                 child: pw.Center(
-                  child: pw.Image(image, fit: pw.BoxFit.contain),
+                  child: pw.Image(
+                    image,
+                    fit: pw.BoxFit.contain,
+                  ),
                 ),
               ),
-              pw.SizedBox(height: 10),
-              pw.Text(photo.location),
-              pw.Text(photo.capturedAt.toLocal().toString()),
-              if (photo.stampData?.coordinates != null)
-                pw.Text(photo.stampData!.coordinates!),
             ],
           ),
         ),
@@ -92,11 +98,28 @@ class ProjectExportService {
     }
 
     final directory = await getTemporaryDirectory();
-    final safeName = project.name.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
+    final safeName = project.name
+        .trim()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    final timestamp = _formatTimestamp(DateTime.now());
+    final projectPart = safeName.isEmpty ? 'Project' : safeName;
     final file = File(
-      '${directory.path}/${safeName}_Project_Report_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      '${directory.path}/GPSMark_${projectPart}_$timestamp.pdf',
     );
     await file.writeAsBytes(await document.save(), flush: true);
     return file;
+  }
+
+  static String _formatTimestamp(DateTime value) {
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+
+    return '${value.year.toString().padLeft(4, '0')}'
+        '${twoDigits(value.month)}'
+        '${twoDigits(value.day)}_'
+        '${twoDigits(value.hour)}'
+        '${twoDigits(value.minute)}'
+        '${twoDigits(value.second)}';
   }
 }

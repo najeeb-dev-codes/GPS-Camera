@@ -1,7 +1,8 @@
-name: gps_camera_app
-description: "GPS Camera mobile application."
+name: gps_mark
+description: "GPS Mark Application."
 publish_to: "none"
-version: 0.1.0+1
+
+version: 1.0.0+1 
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -9,28 +10,17 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
   cupertino_icons: ^1.0.8
-
-  # State management & DI
   flutter_riverpod: ^2.5.1
-
-  # Routing
   go_router: ^14.2.0
-
-  # Typography (Inter, all weights)
   google_fonts: ^6.2.1
-
-  # SVG illustrations
   flutter_svg: ^2.0.10+1
-
-  # Lottie / dotLottie animations
   lottie: ^3.1.2
-
-  # Utils
   intl: ^0.19.0
   flutter_launcher_icons: ^0.14.4
   permission_handler: ^13.0.1
-  device_info_plus:  ^11.2.0
+  device_info_plus: ^11.2.0
   shared_preferences: ^2.5.5
   camera: ^0.12.0+2
   gal: ^2.3.3
@@ -40,6 +30,8 @@ dependencies:
   package_info_plus: ^9.0.1
   uuid: ^4.6.0
   firebase_core: ^4.14.0
+  firebase_analytics: ^12.6.0
+  firebase_crashlytics: ^5.4.0
   firebase_messaging: ^16.6.0
   geolocator: ^14.0.2
   geocoding: ^5.0.0
@@ -54,17 +46,28 @@ dependencies:
   pdf: ^3.13.0
   flutter_map: ^8.3.1
   latlong2: ^0.10.1
+  google_mobile_ads: ^9.1.0
+  webview_flutter: ^4.14.1
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
   flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/images/
     - assets/icon/
+    - assets/images/how_to_use/stamp_template/
+    - assets/images/how_to_use/signature_panel/
+    - assets/images/how_to_use/project/
+    - assets/html/privacy_policy.html
+    - assets/html/howtouse/
+    - assets/html/faq.html
 
 flutter_launcher_icons:
   android: true

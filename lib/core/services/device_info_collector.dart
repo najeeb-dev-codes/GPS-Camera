@@ -45,6 +45,7 @@ class DeviceInfoCollector {
         platform: 'Android',
         osVersion: 'Android ${info.version.release}',
         sdkVersion: info.version.sdkInt,
+        packageName: packageInfo.packageName,
         appVersion: packageInfo.version,
         appBuildNumber: int.tryParse(packageInfo.buildNumber),
         screenResolution: screenResolution,
@@ -65,6 +66,7 @@ class DeviceInfoCollector {
         platform: 'iOS',
         osVersion: 'iOS ${info.systemVersion}',
         sdkVersion: null,
+        packageName: packageInfo.packageName,
         appVersion: packageInfo.version,
         appBuildNumber: int.tryParse(packageInfo.buildNumber),
         screenResolution: screenResolution,
@@ -84,6 +86,7 @@ class DeviceInfoCollector {
       platform: Platform.operatingSystem,
       osVersion: Platform.operatingSystemVersion,
       sdkVersion: null,
+      packageName: packageInfo.packageName,
       appVersion: packageInfo.version,
       appBuildNumber: int.tryParse(packageInfo.buildNumber),
       screenResolution: screenResolution,
@@ -150,6 +153,7 @@ class _StaticDeviceFields {
     required this.platform,
     required this.osVersion,
     required this.sdkVersion,
+    required this.packageName,
     required this.appVersion,
     required this.appBuildNumber,
     required this.screenResolution,
@@ -166,6 +170,7 @@ class _StaticDeviceFields {
   final String? platform;
   final String? osVersion;
   final int? sdkVersion;
+  final String? packageName;
   final String? appVersion;
   final int? appBuildNumber;
   final String? screenResolution;
@@ -200,6 +205,7 @@ class DeviceInfoSnapshot {
     required this.platform,
     required this.osVersion,
     required this.sdkVersion,
+    required this.packageName,
     required this.appVersion,
     required this.appBuildNumber,
     required this.screenResolution,
@@ -220,6 +226,7 @@ class DeviceInfoSnapshot {
   final String? platform;
   final String? osVersion;
   final int? sdkVersion;
+  final String? packageName;
   final String? appVersion;
   final int? appBuildNumber;
   final String? screenResolution;
@@ -245,6 +252,7 @@ class DeviceInfoSnapshot {
       platform: staticFields.platform,
       osVersion: staticFields.osVersion,
       sdkVersion: staticFields.sdkVersion,
+      packageName: staticFields.packageName,
       appVersion: staticFields.appVersion,
       appBuildNumber: staticFields.appBuildNumber,
       screenResolution: staticFields.screenResolution,

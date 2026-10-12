@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
@@ -223,11 +222,11 @@ class GpsStampOverlay extends StatelessWidget {
         ? AppColors.neutral900.withValues(alpha: 0.78)
         : AppColors.white;
 
-    final textColor = dark ? AppColors.white : AppColors.textPrimary;
+    final textColor = dark ? AppColors.white : AppColors.lightTextPrimary;
 
     final subColor = dark
         ? AppColors.white.withValues(alpha: 0.80)
-        : AppColors.textSecondary;
+        : AppColors.lightTextSecondary;
 
     final titleText = data.title ?? data.address;
 
@@ -353,7 +352,7 @@ class GpsStampOverlay extends StatelessWidget {
                       runSpacing: 4,
                       children: [
                         // GPS accuracy is deliberately placed first because
-                        // accuracy is important for a GPS camera.
+                        // accuracy is important for a GPS-based camera.
                         if (visibility.accuracy && data.accuracy != null)
                           _MetaChip(
                             icon: Icons.gps_fixed_rounded,

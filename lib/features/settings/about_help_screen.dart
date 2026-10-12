@@ -1,65 +1,48 @@
 import 'package:flutter/material.dart';
 
+import '../../core/constants/app_brand.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 
 /// Settings > About & Help.
-///
-/// App logo, version, "check for updates" state, and a list of help /
-/// legal links (Help Center, How to Use, Report a Problem, Send Feedback,
-/// Rate the App, Terms, Privacy Policy, Open-source Licenses).
-class AboutHelpScreen extends StatefulWidget {
+class AboutHelpScreen extends StatelessWidget {
   const AboutHelpScreen({super.key});
 
   static const String appVersion = '1.0.0';
 
-  @override
-  State<AboutHelpScreen> createState() => _AboutHelpScreenState();
-}
-
-class _AboutHelpScreenState extends State<AboutHelpScreen> {
-  bool _checking = false;
-  bool _upToDate = true;
-
-  Future<void> _checkForUpdates() async {
-    setState(() {
-      _checking = true;
-      _upToDate = false;
-    });
-    await Future<void>.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    setState(() {
-      _checking = false;
-      _upToDate = true;
-    });
-  }
-
-  void _openLink(String label) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Opening $label...')),
+  void _showComingSoon(
+    BuildContext context, {
+    required String featureName,
+    required IconData icon,
+  }) {
+    ComingSoonDialog.show(
+      context,
+      featureName: featureName,
+      icon: icon,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: const AppTopBar(title: 'About & Help'),
       body: SafeArea(
         top: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final horizontalPadding =
-                constraints.maxWidth >= 600 ? 48.0 : AppSpacing.screenPadding;
+            final horizontalPadding = constraints.maxWidth >= 600
+                ? 48.0
+                : AppSpacing.screenPadding;
 
             return ListView(
               padding: EdgeInsets.fromLTRB(
                 horizontalPadding,
                 AppSpacing.lg,
                 horizontalPadding,
-                24,
+                AppSpacing.xxl,
               ),
               children: [
                 Center(
@@ -67,123 +50,102 @@ class _AboutHelpScreenState extends State<AboutHelpScreen> {
                     children: [
                       const AppLogoMark(size: 88),
                       const SizedBox(height: AppSpacing.md),
-                      Text(
-                        'GeoStamp Camera',
-                        style: AppTypography.h1,
-                      ),
-                      const SizedBox(height: 4),
+                      Text(AppBrand.name, style: AppTypography.h1),
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         'Version ${AboutHelpScreen.appVersion}',
                         style: AppTypography.caption,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         'Capture proof with place & time.',
                         textAlign: TextAlign.center,
-                        style: AppTypography.body
-                            .copyWith(color: AppColors.textSecondary),
+                        style: AppTypography.body.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ],
                   ),
                 ),
-
                 const SizedBox(height: AppSpacing.lg),
-
-                SettingsListTile(
-                  icon: Icons.help_outline,
-                  title: 'Help Center',
-                  onTap: () => _openLink('Help Center'),
-                ),
-                SettingsListTile(
-                  icon: Icons.menu_book_outlined,
-                  title: 'How to Use',
-                  onTap: () => _openLink('How to Use'),
-                ),
-                SettingsListTile(
-                  icon: Icons.report_gmailerrorred_outlined,
-                  title: 'Report a Problem',
-                  onTap: () => _openLink('Report a Problem'),
-                ),
-                SettingsListTile(
-                  icon: Icons.feedback_outlined,
-                  title: 'Send Feedback',
-                  onTap: () => _openLink('Send Feedback'),
-                ),
-                SettingsListTile(
-                  icon: Icons.star_border_rounded,
-                  title: 'Rate the App',
-                  onTap: () => _openLink('Rate the App'),
-                ),
-                SettingsListTile(
-                  icon: Icons.description_outlined,
-                  title: 'Terms of Service',
-                  onTap: () => _openLink('Terms of Service'),
-                ),
-                SettingsListTile(
-                  icon: Icons.privacy_tip_outlined,
-                  title: 'Privacy Policy',
-                  onTap: () => _openLink('Privacy Policy'),
-                ),
-                SettingsListTile(
-                  icon: Icons.receipt_long_outlined,
-                  title: 'Open-source Licenses',
-                  onTap: () => showLicensePage(
-                    context: context,
-                    applicationName: 'GeoStamp Camera',
-                    applicationVersion: AboutHelpScreen.appVersion,
-                  ),
-                ),
-
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                  child: Divider(height: 1, color: AppColors.border),
-                ),
-
-                InkWell(
-                  onTap: _checking ? null : _checkForUpdates,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.system_update_outlined,
-                          color: AppColors.textSecondary,
-                          size: AppSizes.iconMd,
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        Expanded(
-                          child: Text(
-                            'Check for Updates',
-                            style: AppTypography.bodyMedium,
-                          ),
-                        ),
-                        if (_checking)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        else if (_upToDate)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.check_circle,
-                                  color: AppColors.success, size: AppSizes.iconSm),
-                              const SizedBox(width: 4),
-                              Text(
-                                "You're up to date",
-                                style: AppTypography.caption
-                                    .copyWith(color: AppColors.success),
-                              ),
-                            ],
-                          ),
-                      ],
+                SettingsSectionCard(
+                  children: [
+                    _AboutFeatureTile(
+                      icon: Icons.help_outline,
+                      title: 'Help Center',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Help Center',
+                        icon: Icons.help_outline,
+                      ),
                     ),
-                  ),
+                    _AboutFeatureTile(
+                      icon: Icons.menu_book_outlined,
+                      title: 'How to Use',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'How to Use',
+                        icon: Icons.menu_book_outlined,
+                      ),
+                    ),
+                    _AboutFeatureTile(
+                      icon: Icons.report_gmailerrorred_outlined,
+                      title: 'Report a Problem',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Report a Problem',
+                        icon: Icons.report_gmailerrorred_outlined,
+                      ),
+                    ),
+                    _AboutFeatureTile(
+                      icon: Icons.feedback_outlined,
+                      title: 'Send Feedback',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Send Feedback',
+                        icon: Icons.feedback_outlined,
+                      ),
+                    ),
+                    _AboutFeatureTile(
+                      icon: Icons.star_border_rounded,
+                      title: 'Rate the App',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Rate the App',
+                        icon: Icons.star_border_rounded,
+                      ),
+                    ),
+                    _AboutFeatureTile(
+                      icon: Icons.description_outlined,
+                      title: 'Terms of Service',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Terms of Service',
+                        icon: Icons.description_outlined,
+                      ),
+                    ),
+                    _AboutFeatureTile(
+                      icon: Icons.privacy_tip_outlined,
+                      title: 'Privacy Policy',
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Privacy Policy',
+                        icon: Icons.privacy_tip_outlined,
+                      ),
+                    ),
+                    _AboutFeatureTile(
+                      icon: Icons.system_update_outlined,
+                      title: 'Check for Updates',
+                      showDivider: false,
+                      onTap: () => _showComingSoon(
+                        context,
+                        featureName: 'Check for Updates',
+                        icon: Icons.system_update_outlined,
+                      ),
+                    ),
+                  ],
                 ),
-
                 const SizedBox(height: AppSpacing.lg),
-
                 Center(
                   child: Text(
                     'Made with care for field teams and travelers.',
@@ -196,6 +158,38 @@ class _AboutHelpScreenState extends State<AboutHelpScreen> {
           },
         ),
       ),
+    );
+  }
+}
+
+class _AboutFeatureTile extends StatelessWidget {
+  const _AboutFeatureTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.showDivider = true,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SettingsListTile(
+          icon: icon,
+          title: title,
+          onTap: onTap,
+        ),
+        if (showDivider)
+          Divider(
+            height: 1,
+            color: Theme.of(context).dividerColor,
+          ),
+      ],
     );
   }
 }

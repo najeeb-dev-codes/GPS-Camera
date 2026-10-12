@@ -41,13 +41,21 @@ class ImageResponsiveStamp extends StatelessWidget {
         final horizontalGap =
             StampLayoutMetrics.horizontalInset(imageSize.width);
         final baseStampWidth = imageSize.width - (horizontalGap * 2);
-        final stampWidth = imageSize.width * (style.size / 100);
+        final stampWidth = baseStampWidth * sizeFactor;
         final bottomGap =
             (imageSize.height * 0.025).clamp(4.0, 12.0).toDouble();
+        final mapHeightFactor = templateIndex == 0 ? 1.02 : 1.0;
         final desiredHeight = (landscape
-                ? math.min(baseStampWidth * 0.16, imageSize.height * 0.24)
-                : StampLayoutMetrics.portraitStampHeight(imageSize)) *
-            sizeFactor;
+                ? StampLayoutMetrics.landscapeStampHeight(
+                    baseStampWidth,
+                    imageSize.height,
+                  )
+                : StampLayoutMetrics.portraitTemplateHeight(
+                    imageSize,
+                    templateIndex,
+                  )) *
+            sizeFactor *
+            mapHeightFactor;
         final availableHeight = math.max(
           1.0,
           imageSize.height - bottomGap - bottomInset,
@@ -61,17 +69,13 @@ class ImageResponsiveStamp extends StatelessWidget {
               bottom: bottomGap + bottomInset,
               width: stampWidth,
               height: stampHeight,
-              child: FittedBox(
-                fit: landscape ? BoxFit.contain : BoxFit.fill,
-                alignment: Alignment.bottomCenter,
-                child: SizedBox(
-                  width: landscape ? 520 : 360,
-                  child: GpsStampTemplateOverlay(
-                    data: data,
-                    templateIndex: templateIndex,
-                    compact: true,
-                    mapSize: landscape ? 52 : 54,
-                  ),
+              child: GpsStampTemplateOverlay(
+                data: data,
+                templateIndex: templateIndex,
+                compact: true,
+                landscapeLayout: landscape,
+                mapSize: StampLayoutMetrics.squareElementSize(
+                  stampHeight,
                 ),
               ),
             ),

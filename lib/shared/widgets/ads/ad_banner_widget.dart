@@ -1,87 +1,242 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
-import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_dimens.dart';
-import '../../../core/theme/app_typography.dart';
+import '../../../core/services/ad_service.dart';
+import '../../../core/services/connectivity_service.dart';
 
-enum AdPlacementType { banner, native, interstitial, rewarded, custom }
+enum AdDisplayFormat {
+  adaptiveBanner,
+  standardBanner,
+  largeBanner,
+  mediumRectangle,
+}
 
-/// Ad slot card used across Home, Gallery, Templates, Projects, Project
-/// Details.
+enum AppAdLoadState {
+  loading,
+  loaded,
+  failed,
+}
+
+/// Reusable responsive AdMob slot.
 ///
-/// IMPORTANT (per mockup note): never place this widget over GPS stamps,
-/// photos, navigation, primary buttons, or system controls. Keep it in its
-/// own dedicated slot in the layout.
-class AdBannerWidget extends StatelessWidget {
+/// Adaptive banners use the exact available layout width. Medium rectangle
+/// placements use AdMob's 300x250 size and remain centered. Failed/offline ads
+/// collapse to zero height so the surrounding feature remains fully usable.
+class AdBannerWidget extends StatefulWidget {
   const AdBannerWidget({
     super.key,
-    required this.title,
-    this.subtitle,
-    this.ctaLabel = 'Learn More',
-    this.onCtaTap,
-    this.type = AdPlacementType.native,
-    this.imageProvider,
+    this.format = AdDisplayFormat.adaptiveBanner,
+    this.reserveSpaceWhileLoading = false,
+    this.slotHeight,
+    this.decoration,
+    this.onLoadStateChanged,
   });
 
-  final String title;
-  final String? subtitle;
-  final String ctaLabel;
-  final VoidCallback? onCtaTap;
-  final AdPlacementType type;
-  final ImageProvider? imageProvider;
+  final AdDisplayFormat format;
 
-  String get _tag => switch (type) {
-        AdPlacementType.banner => 'Advertisement',
-        AdPlacementType.native => 'Sponsored',
-        AdPlacementType.interstitial => 'Advertisement',
-        AdPlacementType.rewarded => 'Promoted',
-        AdPlacementType.custom => 'Promoted by GeoStamp',
-      };
+  /// Keeps the requested ad area visible while AdMob is loading.
+  final bool reserveSpaceWhileLoading;
+
+  /// Optional placement height. It is applied only while the ad is online;
+  /// offline placements still collapse completely.
+  final double? slotHeight;
+
+  final Decoration? decoration;
+
+  /// Used only by screens that must react to the ad lifecycle, such as the
+  /// first-run Get Started screen.
+  final ValueChanged<AppAdLoadState>? onLoadStateChanged;
+
+  @override
+  State<AdBannerWidget> createState() => _AdBannerWidgetState();
+}
+
+class _AdBannerWidgetState extends State<AdBannerWidget> {
+  BannerAd? _bannerAd;
+  int? _requestedWidth;
+  int _requestGeneration = 0;
+  bool _loadScheduled = false;
+  AppAdLoadState? _loadState;
+  StreamSubscription<bool>? _internetSubscription;
+  bool? _hasInternet =
+      ConnectivityService.instance.lastKnownInternetAccess;
+
+  @override
+  void initState() {
+    super.initState();
+    ConnectivityService.instance.start();
+    _internetSubscription =
+        ConnectivityService.instance.onInternetStatusChanged.listen(
+      _onInternetStatusChanged,
+    );
+    if (_hasInternet == false) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _setLoadState(AppAdLoadState.failed);
+      });
+    }
+  }
+
+  void _onInternetStatusChanged(bool hasInternet) {
+    if (!mounted || _hasInternet == hasInternet) return;
+
+    _hasInternet = hasInternet;
+    if (!hasInternet) {
+      _requestGeneration++;
+      _requestedWidth = null;
+      final ad = _bannerAd;
+      _bannerAd = null;
+      ad?.dispose();
+      _setLoadState(AppAdLoadState.failed);
+    } else {
+      _requestedWidth = null;
+      _loadState = null;
+    }
+    setState(() {});
+  }
+
+  void _setLoadState(AppAdLoadState state) {
+    if (_loadState == state) return;
+    _loadState = state;
+    widget.onLoadStateChanged?.call(state);
+  }
+
+  void _scheduleLoad(int availableWidth) {
+    if (_requestedWidth == availableWidth || _loadScheduled) return;
+
+    _loadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadScheduled = false;
+      if (mounted) _loadBanner(availableWidth);
+    });
+  }
+
+  Future<void> _loadBanner(int availableWidth) async {
+    if (_hasInternet != true ||
+        !AdService.instance.isInitialized ||
+        availableWidth <= 0) {
+      _setLoadState(AppAdLoadState.failed);
+      return;
+    }
+
+    _setLoadState(AppAdLoadState.loading);
+    final fixedSize = switch (widget.format) {
+      AdDisplayFormat.standardBanner => AdSize.banner,
+      AdDisplayFormat.largeBanner => AdSize.largeBanner,
+      AdDisplayFormat.mediumRectangle => AdSize.mediumRectangle,
+      AdDisplayFormat.adaptiveBanner => null,
+    };
+    _requestedWidth = availableWidth;
+    final generation = ++_requestGeneration;
+    final usableFixedSize =
+        fixedSize != null && availableWidth >= fixedSize.width
+            ? fixedSize
+            : null;
+    final AdSize? size = usableFixedSize ??
+        await AdService.instance.adaptiveBannerSize(availableWidth);
+
+    if (!mounted || generation != _requestGeneration) return;
+    if (size == null) {
+      _setLoadState(AppAdLoadState.failed);
+      return;
+    }
+
+    final oldAd = _bannerAd;
+    setState(() => _bannerAd = null);
+    oldAd?.dispose();
+
+    final ad = await AdService.instance.acquireBanner(size);
+    if (ad == null) {
+      if (mounted && generation == _requestGeneration) {
+        _setLoadState(AppAdLoadState.failed);
+      }
+      return;
+    }
+    if (!mounted || generation != _requestGeneration) {
+      ad.dispose();
+      return;
+    }
+    setState(() => _bannerAd = ad);
+    _setLoadState(AppAdLoadState.loaded);
+  }
+
+  @override
+  void didUpdateWidget(covariant AdBannerWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.format != widget.format) {
+      _requestedWidth = null;
+      _requestGeneration++;
+      _bannerAd?.dispose();
+      _bannerAd = null;
+      _loadState = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _requestGeneration++;
+    _internetSubscription?.cancel();
+    _bannerAd?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.neutral100,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          if (imageProvider != null) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: Image(image: imageProvider!, width: 48, height: 48, fit: BoxFit.cover),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (_hasInternet != true) return const SizedBox.shrink();
+
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth.floor()
+            : MediaQuery.sizeOf(context).width.floor();
+        _scheduleLoad(availableWidth);
+
+        final ad = _bannerAd;
+        if (ad == null) {
+          if (!widget.reserveSpaceWhileLoading ||
+              _loadState == AppAdLoadState.failed) {
+            return const SizedBox.shrink();
+          }
+
+          final reservedHeight = widget.slotHeight ?? switch (widget.format) {
+            AdDisplayFormat.mediumRectangle =>
+              availableWidth >= AdSize.mediumRectangle.width ? 250.0 : 50.0,
+            AdDisplayFormat.standardBanner => 50.0,
+            AdDisplayFormat.largeBanner => 100.0,
+            AdDisplayFormat.adaptiveBanner => 50.0,
+          };
+
+          return Container(
+            width: double.infinity,
+            height: reservedHeight,
+            decoration: widget.decoration,
+            child: const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
             ),
-            const SizedBox(width: AppSpacing.md),
-          ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _tag,
-                  style: AppTypography.tiny.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(title, style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-                if (subtitle != null)
-                  Text(subtitle!, style: AppTypography.caption, maxLines: 2, overflow: TextOverflow.ellipsis),
-              ],
+          );
+        }
+
+        return Container(
+          width: double.infinity,
+          height: widget.slotHeight ?? ad.size.height.toDouble(),
+          decoration: widget.decoration ??
+              BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+              ),
+          child: Center(
+            child: SizedBox(
+              width: ad.size.width.toDouble(),
+              height: ad.size.height.toDouble(),
+              child: AdWidget(ad: ad),
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          TextButton(
-            onPressed: onCtaTap,
-            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
-            child: Text(ctaLabel, style: AppTypography.caption.copyWith(fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

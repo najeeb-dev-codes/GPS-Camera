@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../../core/constants/app_input_limits.dart';
 import '../../core/navigation/app_navigator.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
@@ -19,10 +20,17 @@ class ProjectsScreen extends StatefulWidget {
 }
 
 class _ProjectsScreenState extends State<ProjectsScreen> {
+  static const List<String> _filters = <String>[
+    'All',
+    'Active',
+    'Archived',
+  ];
+
   final ProjectRepository _repository = ProjectRepository.instance;
   final TextEditingController _search = TextEditingController();
   int _filterIndex = 0;
   bool _loading = true;
+  bool _showSearch = false;
 
   @override
   void initState() {
@@ -39,6 +47,15 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  void _toggleSearch() {
+    final showSearch = !_showSearch;
+    setState(() => _showSearch = showSearch);
+    if (!showSearch) {
+      _search.clear();
+      FocusScope.of(context).unfocus();
+    }
   }
 
   @override
@@ -86,16 +103,70 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     return 'Updated ${difference.inDays} days ago';
   }
 
+  Widget _buildFilterBar() {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.mutedSurface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        children: List.generate(_filters.length, (index) {
+          final selected = _filterIndex == index;
+          return Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(
+                right: index < _filters.length - 1 ? 4 : 0,
+              ),
+              child: Material(
+                color: selected
+                    ? AppColors.isDarkMode
+                        ? AppColors.primarySurface
+                        : AppColors.lightSurface
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  onTap: () => setState(() => _filterIndex = index),
+                  child: Center(
+                    child: Text(
+                      _filters[index],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.caption.copyWith(
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.textSecondary,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        automaticallyImplyLeading: false,
-        title: const Text('Projects'),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppTopBar(
+        title: 'Projects',
+        showBack: false,
+        showConnectivityStatus: true,
+        actions: [
+          IconButton(
+            tooltip: _showSearch ? 'Close search' : 'Search projects',
+            onPressed: _toggleSearch,
+            icon: Icon(_showSearch ? Icons.close : Icons.search),
+          ),
+        ],
       ),
       body: SafeArea(
         top: false,
@@ -108,30 +179,30 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                 constraints: const BoxConstraints(maxWidth: 900),
                 child: Column(
                   children: [
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(padding, 8, padding, 10),
-                      child: TextField(
-                        controller: _search,
-                        decoration: InputDecoration(
-                          hintText: 'Search projects',
-                          prefixIcon: const Icon(Icons.search),
-                          filled: true,
-                          fillColor: AppColors.white,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(AppRadius.sm),
-                            borderSide: BorderSide.none,
+                    if (_showSearch)
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(padding, 8, padding, 10),
+                        child: TextField(
+                          controller: _search,
+                          maxLength: AppInputLimits.search,
+                          autofocus: true,
+                          decoration: InputDecoration(
+                            hintText: 'Search projects',
+                            counterText: '',
+                            prefixIcon: const Icon(Icons.search),
+                            filled: true,
+                            fillColor: AppColors.surface,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(AppRadius.sm),
+                              borderSide: BorderSide.none,
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    if (!_showSearch) const SizedBox(height: 8),
                     Padding(
                       padding: EdgeInsets.symmetric(horizontal: padding),
-                      child: AppTabSelector(
-                        tabs: const ['All', 'Active', 'Archived'],
-                        selectedIndex: _filterIndex,
-                        onChanged: (index) => setState(() => _filterIndex = index),
-                        scrollable: false,
-                      ),
+                      child: _buildFilterBar(),
                     ),
                     const SizedBox(height: 12),
                     Expanded(
@@ -154,8 +225,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                   itemBuilder: (context, index) =>
                                       _ProjectListCard(
                                     project: _projects[index],
-                                    updatedLabel:
-                                        _updatedLabel(_projects[index].updatedAt),
+                                    updatedLabel: _updatedLabel(
+                                        _projects[index].updatedAt),
                                     onTap: () => Navigator.of(context).push(
                                       MaterialPageRoute(
                                         builder: (_) => ProjectDetailsScreen(
@@ -180,9 +251,18 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('New Project'),
       ),
-      bottomNavigationBar: AppBottomNavBar(
-        currentIndex: 3,
-        onTap: (index) => AppNavigator.handleBottomNavTap(context, index),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const AdBannerWidget(
+            format: AdDisplayFormat.largeBanner,
+            reserveSpaceWhileLoading: true,
+          ),
+          AppBottomNavBar(
+            currentIndex: 3,
+            onTap: (index) => AppNavigator.handleBottomNavTap(context, index),
+          ),
+        ],
       ),
     );
   }
@@ -201,9 +281,33 @@ class _ProjectListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recent = project.recentPhoto;
+    final coverColor = Color(project.colorValue);
+    final isLightCover = coverColor.value == 0xFFFFFFFF;
+    final coverPath = project.coverImagePath;
+    final hasCoverImage = coverPath != null &&
+        coverPath.isNotEmpty &&
+        !isGeneratedProjectNameCover(coverPath) &&
+        File(coverPath).existsSync();
+
+    Widget buildInitialsCover() => Container(
+          width: 84,
+          height: 84,
+          color: coverColor,
+          alignment: Alignment.center,
+          child: Text(
+            _projectInitials(project.name),
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+            style: AppTypography.h2.copyWith(
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+              color: isLightCover ? Colors.black : Colors.white,
+            ),
+          ),
+        );
+
     return Material(
-      color: AppColors.white,
+      color: AppColors.surface,
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: InkWell(
         onTap: onTap,
@@ -218,17 +322,16 @@ class _ProjectListCard extends StatelessWidget {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.sm),
-                child: recent != null && File(recent.path).existsSync()
-                    ? Image.file(File(recent.path),
-                        width: 84, height: 72, fit: BoxFit.cover)
-                    : Container(
+                child: hasCoverImage
+                    ? Image.file(
+                        File(coverPath!),
                         width: 84,
-                        height: 72,
-                        color: project.color.withValues(alpha: 0.16),
-                        alignment: Alignment.center,
-                        child: Icon(Icons.folder_outlined,
-                            color: project.color, size: 34),
-                      ),
+                        height: 84,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            buildInitialsCover(),
+                      )
+                    : buildInitialsCover(),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -253,42 +356,29 @@ class _ProjectListCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: project.color,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: const [
-                        BoxShadow(color: Colors.black12, blurRadius: 3),
-                      ],
-                    ),
+              Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: project.status == ProjectStatus.active
+                        ? const Color(0xFFDDF7E5)
+                        : AppColors.border,
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  const SizedBox(height: 7),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
+                  child: Text(
+                    project.status == ProjectStatus.active
+                        ? 'Active'
+                        : 'Archived',
+                    style: TextStyle(
                       color: project.status == ProjectStatus.active
-                          ? const Color(0xFFDDF7E5)
-                          : AppColors.border,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      project.status == ProjectStatus.active ? 'Active' : 'Archived',
-                      style: TextStyle(
-                        color: project.status == ProjectStatus.active
-                            ? const Color(0xFF137A36)
-                            : AppColors.textSecondary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
+                          ? const Color(0xFF137A36)
+                          : AppColors.textSecondary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                ],
+                ),
               ),
             ],
           ),
@@ -296,4 +386,19 @@ class _ProjectListCard extends StatelessWidget {
       ),
     );
   }
+}
+
+
+String _projectInitials(String name) {
+  final words = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .toList(growable: false);
+  return words.length == 1
+      ? String.fromCharCodes(words.first.runes.take(2)).toUpperCase()
+      : words
+          .take(2)
+          .map((word) => String.fromCharCode(word.runes.first).toUpperCase())
+          .join();
 }

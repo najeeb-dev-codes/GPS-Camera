@@ -41,8 +41,31 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: const AppTopBar(title: 'Photo Quality'),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppTopBar(
+        title: 'Photo Quality',
+        actions: [
+          TextButton(
+            onPressed: () {
+              _service.reset();
+              AppTopToast.show(
+                context,
+                message: 'Reset successfully',
+                icon: Icons.refresh_rounded,
+                backgroundColor: Colors.green,
+              );
+              Navigator.of(context).pop();
+            },
+            child: Text(
+              'Reset',
+              style: AppTypography.bodyMedium.copyWith(
+                color: Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         top: false,
         child: ListenableBuilder(
@@ -62,8 +85,11 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
                     ? 48.0
                     : AppSpacing.screenPadding;
 
-                return Column(
-                  children: [
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      children: [
                     Expanded(
                       child: ListView(
                         padding: EdgeInsets.fromLTRB(
@@ -73,6 +99,7 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
                           24,
                         ),
                         children: [
+                          SettingsSectionCard(children: [
                           DropdownSettingRow<PhotoResolutionOption>(
                             title: 'Photo Resolution',
                             value: settings.resolution,
@@ -111,7 +138,7 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
                             valueLabelBuilder: (value) => '${value.round()}%',
                             onChanged: _service.setJpegQuality,
                           ),
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                             child: Divider(height: 1, color: AppColors.border),
                           ),
@@ -154,7 +181,7 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
                             width: double.infinity,
                             padding: const EdgeInsets.all(AppSpacing.md),
                             decoration: BoxDecoration(
-                              color: AppColors.white,
+                              color: AppColors.surface,
                               borderRadius: BorderRadius.circular(AppRadius.md),
                               border: Border.all(color: AppColors.border),
                             ),
@@ -184,9 +211,11 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
                               ],
                             ),
                           ),
+                          ]),
                         ],
                       ),
                     ),
+                    const AdBannerWidget(),
                     Padding(
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
@@ -194,20 +223,25 @@ class _PhotoQualityScreenState extends State<PhotoQualityScreen> {
                         horizontalPadding,
                         16,
                       ),
-                      child: AppSecondaryButton(
-                        label: 'Restore Defaults',
-                        icon: Icons.refresh_rounded,
-                        onPressed: () {
-                          _service.reset();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Photo quality settings restored'),
-                            ),
+                      child: AppPrimaryButton(
+                        label: 'Save Changes',
+                        icon: Icons.save_outlined,
+                        onPressed: () async {
+                          await _service.save();
+                          if (!context.mounted) return;
+                          AppTopToast.show(
+                            context,
+                            message: 'Changes saved successfully',
+                            icon: Icons.check_circle_outline_rounded,
+                            backgroundColor: Colors.green,
                           );
+                          Navigator.of(context).pop();
                         },
                       ),
                     ),
-                  ],
+                      ],
+                    ),
+                  ),
                 );
               },
             );

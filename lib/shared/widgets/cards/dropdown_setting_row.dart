@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
 import '../../../core/theme/app_typography.dart';
 
@@ -28,30 +27,92 @@ class DropdownSettingRow<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(title, style: AppTypography.bodyMedium),
+    final colors = Theme.of(context).colorScheme;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final dropdownWidth =
+            (constraints.maxWidth * 0.48).clamp(120.0, 260.0).toDouble();
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: colors.onSurface,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              SizedBox(
+                width: dropdownWidth,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<T>(
+                      value: value,
+                      onChanged: onChanged,
+                      isExpanded: true,
+                      isDense: true,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.sm,
+                      ),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      dropdownColor: colors.surfaceContainerHighest,
+                      menuMaxHeight: 320,
+                      style: AppTypography.bodyMedium.copyWith(
+                        color: colors.primary,
+                      ),
+                      icon: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: colors.primary,
+                        size: 22,
+                      ),
+                      selectedItemBuilder: (context) => items
+                          .map(
+                            (item) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                _labelOf(item),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTypography.bodyMedium.copyWith(
+                                  color: colors.primary,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      items: items
+                          .map(
+                            (item) => DropdownMenuItem<T>(
+                              value: item,
+                              child: Text(
+                                _labelOf(item),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTypography.body.copyWith(
+                                  color: colors.onSurface,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              onChanged: onChanged,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              style: AppTypography.bodyMedium.copyWith(color: AppColors.textPrimary),
-              icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.neutral400),
-              items: items
-                  .map((item) => DropdownMenuItem<T>(
-                        value: item,
-                        child: Text(_labelOf(item)),
-                      ))
-                  .toList(),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

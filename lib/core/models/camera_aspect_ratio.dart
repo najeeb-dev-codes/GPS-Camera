@@ -23,7 +23,7 @@ enum CameraAspectRatioOption {
     for (final option in values) {
       if (option.label == label) return option;
     }
-    return ratio16x9;
+    return full;
   }
 
   CameraAspectRatioOption get next {

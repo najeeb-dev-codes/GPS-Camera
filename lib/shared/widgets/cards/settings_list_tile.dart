@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
 import '../../../core/theme/app_typography.dart';
 
@@ -33,13 +32,19 @@ class SettingsListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
         child: Row(
           children: [
-            Icon(icon, size: AppSizes.iconMd, color: iconColor ?? AppColors.textSecondary),
+            Icon(
+              icon,
+              size: AppSizes.iconMd,
+              color: iconColor ?? colors.onSurfaceVariant,
+            ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Column(
@@ -47,15 +52,25 @@ class SettingsListTile extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: AppTypography.bodyMedium.copyWith(color: titleColor ?? AppColors.textPrimary),
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: titleColor ?? colors.onSurface,
+                    ),
                   ),
                   if (subtitle != null)
-                    Text(subtitle!, style: AppTypography.caption),
+                    Text(
+                      subtitle!,
+                      style: AppTypography.caption.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
                 ],
               ),
             ),
             trailing ??
-                const Icon(Icons.chevron_right, color: AppColors.neutral400),
+                Icon(
+                  Icons.chevron_right,
+                  color: colors.onSurfaceVariant,
+                ),
           ],
         ),
       ),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
 import '../../../core/theme/app_typography.dart';
 
@@ -27,41 +26,49 @@ class AppTabSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     final row = Row(
       mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
       children: List.generate(tabs.length, (index) {
         final selected = index == selectedIndex;
-      final tab = GestureDetector(
-              onTap: () => onChanged(index),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm,
-                ),
-                decoration: BoxDecoration(
-                  color: selected ? AppColors.primary : AppColors.neutral100,
-                  borderRadius: BorderRadius.circular(AppRadius.pill),
-                ),
-                child: Text(
-                  tabs[index],
-                  style: AppTypography.bodyMedium.copyWith(
-                    color: selected ? AppColors.white : AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
+        final tab = GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => onChanged(index),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            alignment: Alignment.center,
+            padding: EdgeInsets.symmetric(
+              horizontal: scrollable ? AppSpacing.lg : AppSpacing.sm,
+              vertical: AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: selected ? colors.primary : colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                tabs[index],
+                maxLines: 1,
+                softWrap: false,
+                textAlign: TextAlign.center,
+                style: AppTypography.bodyMedium.copyWith(
+                  color: selected ? colors.onPrimary : colors.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-          );
+            ),
+          ),
+        );
 
-      final padded = Padding(
-        padding: EdgeInsets.only(right: scrollable ? AppSpacing.sm : 0),
-        child: tab,
-      );
+        final padded = Padding(
+          padding: EdgeInsets.only(right: scrollable ? AppSpacing.sm : 0),
+          child: tab,
+        );
 
-      // Expanded must be a direct child of Row. Placing it below Padding
-      // causes an Incorrect use of ParentDataWidget runtime exception.
-      return scrollable ? padded : Expanded(child: padded);
+        // Expanded must be a direct child of Row. Placing it below Padding
+        // causes an Incorrect use of ParentDataWidget runtime exception.
+        return scrollable ? padded : Expanded(child: padded);
       }),
     );
 

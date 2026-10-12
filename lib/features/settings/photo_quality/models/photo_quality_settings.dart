@@ -1,5 +1,4 @@
 enum PhotoResolutionOption {
-  highestAvailable('Highest available', 4096),
   high('High', 3264),
   medium('Medium', 2048),
   low('Low', 1280);
@@ -12,7 +11,7 @@ enum PhotoResolutionOption {
   static PhotoResolutionOption fromName(String? value) {
     return PhotoResolutionOption.values.firstWhere(
       (item) => item.name == value,
-      orElse: () => PhotoResolutionOption.highestAvailable,
+      orElse: () => PhotoResolutionOption.high,
     );
   }
 }
@@ -30,7 +29,7 @@ enum PhotoImageFormatOption {
   static PhotoImageFormatOption fromName(String? value) {
     return PhotoImageFormatOption.values.firstWhere(
       (item) => item.name == value,
-      orElse: () => PhotoImageFormatOption.jpeg,
+      orElse: () => PhotoImageFormatOption.png,
     );
   }
 }
@@ -53,20 +52,23 @@ enum WatermarkCompressionOption {
   static WatermarkCompressionOption fromName(String? value) {
     return WatermarkCompressionOption.values.firstWhere(
       (item) => item.name == value,
-      orElse: () => WatermarkCompressionOption.highQuality,
+      orElse: () => WatermarkCompressionOption.balanced,
     );
   }
 }
 
 class PhotoQualitySettings {
+  static const PhotoResolutionOption defaultResolution =
+      PhotoResolutionOption.high;
+
   const PhotoQualitySettings({
-    this.resolution = PhotoResolutionOption.highestAvailable,
-    this.format = PhotoImageFormatOption.jpeg,
+    this.resolution = defaultResolution,
+    this.format = PhotoImageFormatOption.png,
     this.jpegQuality = 95,
     this.hdrCapture = false,
     this.autoEnhance = false,
-    this.watermarkCompression = WatermarkCompressionOption.highQuality,
-    this.preserveExifMetadata = true,
+    this.watermarkCompression = WatermarkCompressionOption.balanced,
+    this.preserveExifMetadata = false,
     this.embedGpsInExif = true,
   });
 
@@ -84,7 +86,6 @@ class PhotoQualitySettings {
 
   String get estimatedSizeLabel {
     final baseMb = switch (resolution) {
-      PhotoResolutionOption.highestAvailable => 7.5,
       PhotoResolutionOption.high => 5.0,
       PhotoResolutionOption.medium => 2.7,
       PhotoResolutionOption.low => 1.3,

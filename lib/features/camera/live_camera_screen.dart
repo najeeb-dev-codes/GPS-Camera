@@ -4,10 +4,15 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import '../../core/models/camera_aspect_ratio.dart';
+import '../../core/services/ad_service.dart';
+import '../../core/constants/ad_unit_ids.dart';
 import '../../core/services/app_settings_service.dart';
 import '../../core/services/captured_photo_service.dart';
+import '../../core/services/connectivity_service.dart';
+import '../../core/services/internet_settings_service.dart';
 import '../../core/services/live_location_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
@@ -16,13 +21,13 @@ import '../settings/photo_quality/models/photo_quality_settings.dart';
 import '../settings/photo_quality/services/photo_quality_camera_service.dart';
 import '../settings/photo_quality/services/photo_quality_settings_service.dart';
 import '../gallery/gallery_screen.dart';
-import '../projects/project_data.dart';
 import '../stamp_templates/stamp_templates_screen.dart';
 import 'capture_preview_screen.dart';
 import 'services/camera_exposure_service.dart';
+import 'services/camera_hardware_service.dart';
 import 'services/camera_orientation_service.dart';
-import 'services/captured_image_orientation_service.dart';
 import 'widgets/camera_brightness_control.dart';
+import 'widgets/camera_level_indicator.dart';
 import 'widgets/camera_ratio_frame.dart';
 import 'widgets/responsive_camera_stamp.dart';
 
@@ -46,9 +51,24 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
 
   bool _isInitializing = true;
   bool _isCapturing = false;
+  bool _cameraFeaturesStarted = false;
   bool _flashOn = false;
   bool _showBrightness = false;
   Timer? _brightnessHideTimer;
+  Timer? _focusHideTimer;
+  StreamSubscription<String>? _volumeButtonSubscription;
+  StreamSubscription<bool>? _internetSubscription;
+  BannerAd? _cameraBannerAd;
+  bool _isLoadingCameraBanner = false;
+  int? _cameraBannerWidth;
+  int _cameraBannerGeneration = 0;
+  bool _cameraBannerFailed = false;
+  Timer? _cameraBannerRetryTimer;
+  StreamSubscription<bool>? _bannerOnlineSubscription;
+  final GlobalKey _cameraSurfaceKey = GlobalKey();
+  Offset? _focusPoint;
+  int _timerSeconds = 0;
+  double _zoomLevel = 1;
 
   final CameraExposureService _exposureService = CameraExposureService();
   double _brightnessPercentage = 50;
@@ -70,6 +90,12 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
       CameraAspectRatioOption.fromLabel(_settings.aspectRatio);
 
   bool get _gridOn => _settings.gridLines;
+
+  bool _checkingInternet = false;
+  bool _internetDialogVisible = false;
+  bool _appIsActive = true;
+  int _cameraStartGeneration = 0;
+  Future<void> _pendingCameraDisposal = Future<void>.value();
 
 
   // ===========================================================================
@@ -135,30 +161,255 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     WidgetsBinding.instance.addObserver(this);
     _settings.addListener(_onSettingsChanged);
     _photoQuality.addListener(_onPhotoQualityChanged);
-
-    _loadProjectPresetAndInitialize();
-    _loadRecentPhoto();
-    _startLiveLocation();
-    _startOrientationListener();
+    ConnectivityService.instance.start();
+    _internetSubscription =
+        ConnectivityService.instance.onBackOnline.listen((_) {
+      if (!_cameraFeaturesStarted) {
+        unawaited(_checkInternetAndStartCamera());
+      }
+    });
+    _bannerOnlineSubscription =
+        ConnectivityService.instance.onBackOnline.listen((_) {
+      _retryCameraBanner();
+    });
+    // Start camera initialization as soon as this screen is created. GPS,
+    // settings, recent-photo loading, orientation and the banner continue in
+    // parallel and never gate the live preview.
+    _startCameraFeatures();
+    unawaited(ConnectivityService.instance.hasInternetAccess());
   }
 
-  Future<void> _loadProjectPresetAndInitialize() async {
-    final projectId = widget.initialProjectId;
-    if (projectId != null) {
-      await ProjectRepository.instance.ensureLoaded();
-      final project = ProjectRepository.instance.findById(projectId);
-      if (project?.useStampPreset == true) {
-        _selectedTemplateIndex = project!.stampTemplateIndex;
+  void _ensureCameraBanner(double availableWidth) {
+    final width = availableWidth.floor();
+    if (!mounted || width <= 0) return;
+    if (_cameraBannerWidth == width &&
+        (_cameraBannerAd != null ||
+            _isLoadingCameraBanner ||
+            _cameraBannerFailed)) {
+      return;
+    }
+
+    _cameraBannerWidth = width;
+    _cameraBannerFailed = false;
+    _cameraBannerRetryTimer?.cancel();
+    final generation = ++_cameraBannerGeneration;
+    _cameraBannerAd?.dispose();
+    _cameraBannerAd = null;
+    _isLoadingCameraBanner = true;
+    unawaited(_loadCameraBanner(width, generation));
+  }
+
+  /// Retries after a failed banner load (called by a timer or when the
+  /// internet comes back). Never called from build().
+  void _retryCameraBanner() {
+    if (!mounted || _cameraBannerAd != null || _isLoadingCameraBanner) return;
+    _cameraBannerFailed = false;
+    _cameraBannerRetryTimer?.cancel();
+    final width = _cameraBannerWidth;
+    if (width == null) return;
+    final generation = ++_cameraBannerGeneration;
+    _isLoadingCameraBanner = true;
+    unawaited(_loadCameraBanner(width, generation));
+  }
+
+  /// Loads a banner that is owned exclusively by this screen.
+  Future<BannerAd?> _loadOwnBanner(AdSize size) async {
+    final completer = Completer<BannerAd?>();
+    final ownAd = BannerAd(
+      adUnitId: AdUnitIds.banner,
+      request: const AdRequest(),
+      size: size,
+      listener: BannerAdListener(
+        onAdLoaded: (loadedAd) {
+          if (!completer.isCompleted) {
+            completer.complete(loadedAd as BannerAd);
+          }
+        },
+        onAdFailedToLoad: (failedAd, error) {
+          failedAd.dispose();
+          if (!completer.isCompleted) completer.complete(null);
+          debugPrint('Live camera banner load failed: $error');
+        },
+      ),
+    );
+    ownAd.load();
+    final loaded = await completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => null,
+    );
+    if (loaded == null) ownAd.dispose();
+    return loaded;
+  }
+
+  Future<void> _loadCameraBanner(int width, int generation) async {
+    BannerAd? ad;
+    try {
+      final size = await AdService.instance.adaptiveBannerSize(width);
+      if (!mounted || generation != _cameraBannerGeneration) return;
+      if (size == null) {
+        _onCameraBannerFailed(generation);
+        return;
+      }
+
+      // 1) Shared AdService banner (claimed exclusively: acquireBanner removes
+      //    it from the cache, so no other screen can attach the same ad).
+      ad = await AdService.instance.acquireBanner(size);
+
+      // 2) Fallback: AdService can return null when its connectivity flag has
+      //    not been verified yet. Load a screen-owned banner instead.
+      ad ??= await _loadOwnBanner(size);
+
+      if (!mounted || generation != _cameraBannerGeneration) {
+        ad?.dispose();
+        return;
+      }
+
+      if (ad == null) {
+        _onCameraBannerFailed(generation);
+        return;
+      }
+
+      setState(() {
+        _cameraBannerAd = ad;
+        _isLoadingCameraBanner = false;
+        _cameraBannerFailed = false;
+      });
+    } catch (error) {
+      ad?.dispose();
+      debugPrint('Live camera banner load failed: $error');
+      if (mounted && generation == _cameraBannerGeneration) {
+        _onCameraBannerFailed(generation);
       }
     }
+  }
+
+  void _onCameraBannerFailed(int generation) {
+    if (!mounted || generation != _cameraBannerGeneration) return;
+    setState(() {
+      _isLoadingCameraBanner = false;
+      _cameraBannerFailed = true;
+    });
+    _cameraBannerRetryTimer?.cancel();
+    _cameraBannerRetryTimer = Timer(
+      const Duration(seconds: 20),
+      _retryCameraBanner,
+    );
+  }
+
+  Widget _buildCameraBanner() {
+    final ad = _cameraBannerAd;
+    if (ad == null) return const SizedBox.shrink();
+
+    return SizedBox(
+      width: ad.size.width.toDouble(),
+      height: ad.size.height.toDouble(),
+      // GlobalObjectKey lets Flutter move this exact AdWidget element within
+      // the same frame instead of mounting a second one for the same ad.
+      child: AdWidget(
+        key: GlobalObjectKey(ad),
+        ad: ad,
+      ),
+    );
+  }
+
+  Future<void> _checkInternetAndStartCamera() async {
+    if (!mounted ||
+        !_appIsActive ||
+        _cameraFeaturesStarted ||
+        _checkingInternet ||
+        _internetDialogVisible) {
+      return;
+    }
+
+    _checkingInternet = true;
+    final online = await ConnectivityService.instance.hasInternetAccess();
+    _checkingInternet = false;
+    if (!mounted || _cameraFeaturesStarted) return;
+
+    if (online) {
+      _startCameraFeatures();
+      return;
+    }
+
+    await _showCameraInternetDialog();
+  }
+
+  Future<void> _showCameraInternetDialog() async {
+    if (!mounted || _internetDialogVisible || _cameraFeaturesStarted) return;
+
+    _internetDialogVisible = true;
+    final action = await showInternetRequiredDialog(context);
+    _internetDialogVisible = false;
+    if (!mounted || _cameraFeaturesStarted) return;
+
+    switch (action) {
+      case InternetRequiredAction.connected:
+        await _checkInternetAndStartCamera();
+        break;
+      case InternetRequiredAction.openSettings:
+        final opened = await InternetSettingsService.open();
+        if (!mounted) return;
+        if (!opened) {
+          AppTopToast.show(
+            context,
+            message: 'Unable to open internet settings.',
+            icon: Icons.error_outline_rounded,
+          );
+          await _checkInternetAndStartCamera();
+        }
+        break;
+      case InternetRequiredAction.cancel:
+        await Navigator.of(context).maybePop();
+        break;
+    }
+  }
+
+  void _startCameraFeatures() {
+    if (!mounted || _cameraFeaturesStarted) return;
+
+    setState(() => _cameraFeaturesStarted = true);
+    unawaited(_loadSettingsAndInitialize());
+    unawaited(_loadRecentPhoto());
+    unawaited(_startLiveLocation());
+    _startOrientationListener();
+    _startHardwareButtons();
+  }
+
+  Future<void> _loadSettingsAndInitialize() async {
+    // Start camera discovery immediately while preferences load in parallel.
+    // The camera screen should not wait for unrelated stamp/template settings.
+    final settingsFuture = Future.wait<void>(<Future<void>>[
+      _settings.ensureCameraSettingsLoaded(),
+      _settings.ensureStampTemplateSettingsLoaded(),
+    ]);
+    final cameraFuture = _initializeCamera();
+    await settingsFuture;
     if (!mounted) return;
-    await _initializeCamera();
+    setState(() {
+      _selectedTemplateIndex = _settings.selectedStampTemplateIndex;
+    });
+    await cameraFuture;
   }
 
 
   void _onSettingsChanged() {
     if (!mounted) return;
+    unawaited(CameraHardwareService.setVolumeAction(_settings.volumeKeyAction));
     setState(() {});
+  }
+
+  void _startHardwareButtons() {
+    unawaited(CameraHardwareService.setVolumeAction(_settings.volumeKeyAction));
+    _volumeButtonSubscription = CameraHardwareService.volumeButtons.listen(
+      (button) {
+        if (!mounted) return;
+        if (_settings.volumeKeyAction == 'Capture') {
+          unawaited(_captureWithTimer());
+        } else if (_settings.volumeKeyAction == 'Zoom') {
+          unawaited(_changeZoom(button == 'up' ? 0.2 : -0.2));
+        }
+      },
+    );
   }
 
   void _onPhotoQualityChanged() {
@@ -216,8 +467,13 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
 
   Future<void> _initializeCamera() async {
     try {
-      await _photoQuality.ensureLoaded();
-      _cameras = await availableCameras();
+      // Discover available cameras while saved photo-quality preferences load.
+      // Running these independent operations together reduces startup delay
+      // without changing the user's selected capture resolution.
+      final camerasFuture = availableCameras();
+      final qualityFuture = _photoQuality.ensureLoaded();
+      _cameras = await camerasFuture;
+      await qualityFuture;
 
       if (_cameras.isEmpty) {
         if (!mounted) return;
@@ -229,6 +485,12 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
         return;
       }
 
+      final wantedDirection = _settings.defaultCamera == 'Front Camera'
+          ? CameraLensDirection.front
+          : CameraLensDirection.back;
+      final wantedIndex =
+          _cameras.indexWhere((camera) => camera.lensDirection == wantedDirection);
+      _currentCameraIndex = wantedIndex < 0 ? 0 : wantedIndex;
       await _startCamera(_currentCameraIndex);
     } catch (e) {
       debugPrint('Camera initialization error: $e');
@@ -242,15 +504,28 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
   }
 
   Future<void> _startCamera(int cameraIndex) async {
-    if (_cameras.isEmpty) return;
+    if (!mounted || !_appIsActive || _cameras.isEmpty) return;
 
-    if (mounted) {
-      setState(() {
-        _isInitializing = true;
-      });
+    // Every start owns a generation. App lifecycle changes increment this
+    // value so an older asynchronous initialize call cannot put a disposed
+    // controller back into the widget tree after an app-open ad closes.
+    final generation = ++_cameraStartGeneration;
+    final previousController = _cameraController;
+    _cameraController = null;
+
+    setState(() => _isInitializing = true);
+
+    if (previousController != null) {
+      await _queueCameraDisposal(previousController);
+    } else {
+      await _pendingCameraDisposal;
     }
 
-    await _cameraController?.dispose();
+    if (!mounted ||
+        !_appIsActive ||
+        generation != _cameraStartGeneration) {
+      return;
+    }
 
     final selectedResolution = _photoQuality.current.resolution;
 
@@ -265,6 +540,17 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
 
     try {
       await controller.initialize();
+
+      if (!_isCurrentCameraStart(generation, controller)) {
+        if (identical(_cameraController, controller)) {
+          _cameraController = null;
+        }
+        await _queueCameraDisposal(controller);
+        return;
+      }
+
+      _zoomLevel = await controller.getMinZoomLevel();
+      await controller.setZoomLevel(_zoomLevel);
 
       await controller.setFlashMode(
         _flashOn ? FlashMode.torch : FlashMode.off,
@@ -281,7 +567,13 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
         _showBrightness = false;
       }
 
-      if (!mounted) return;
+      if (!_isCurrentCameraStart(generation, controller)) {
+        if (identical(_cameraController, controller)) {
+          _cameraController = null;
+        }
+        await _queueCameraDisposal(controller);
+        return;
+      }
 
       setState(() {
         _activePhotoResolution = selectedResolution;
@@ -290,12 +582,46 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     } catch (e) {
       debugPrint('Camera start error: $e');
 
-      if (!mounted) return;
+      final ownsController = identical(_cameraController, controller);
+      if (ownsController) _cameraController = null;
+      await _queueCameraDisposal(controller);
 
-      setState(() {
-        _isInitializing = false;
-      });
+      if (!mounted ||
+          !_appIsActive ||
+          generation != _cameraStartGeneration) {
+        return;
+      }
+
+      setState(() => _isInitializing = false);
     }
+  }
+
+  bool _isCurrentCameraStart(
+    int generation,
+    CameraController controller,
+  ) {
+    return mounted &&
+        _appIsActive &&
+        generation == _cameraStartGeneration &&
+        identical(_cameraController, controller);
+  }
+
+  Future<void> _disposeCameraController(CameraController controller) async {
+    try {
+      await controller.dispose();
+    } catch (error) {
+      debugPrint('Camera controller disposal error: $error');
+    }
+  }
+
+  Future<void> _queueCameraDisposal(CameraController controller) {
+    final previousDisposal = _pendingCameraDisposal;
+    final disposal = () async {
+      await previousDisposal;
+      await _disposeCameraController(controller);
+    }();
+    _pendingCameraDisposal = disposal;
+    return disposal;
   }
 
   // ===========================================================================
@@ -335,20 +661,67 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     }
   }
 
+  Future<void> _changeZoom(double change) async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+    final minimum = await controller.getMinZoomLevel();
+    final maximum = await controller.getMaxZoomLevel();
+    _zoomLevel = (_zoomLevel + change).clamp(minimum, maximum).toDouble();
+    await controller.setZoomLevel(_zoomLevel);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _focusCamera(Offset localPosition) async {
+    final controller = _cameraController;
+    final size = _cameraSurfaceKey.currentContext?.size;
+    if (!_settings.tapToFocus ||
+        controller == null ||
+        !controller.value.isInitialized ||
+        size == null ||
+        size.isEmpty) return;
+    final point = Offset(
+      (localPosition.dx / size.width).clamp(0, 1).toDouble(),
+      (localPosition.dy / size.height).clamp(0, 1).toDouble(),
+    );
+    try {
+      await controller.setFocusPoint(point);
+      await controller.setExposurePoint(point);
+      _focusHideTimer?.cancel();
+      if (mounted) setState(() => _focusPoint = localPosition);
+      _focusHideTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) setState(() => _focusPoint = null);
+      });
+    } catch (error) {
+      debugPrint('Tap-to-focus unavailable: $error');
+    }
+  }
+
   // ===========================================================================
   // APP LIFECYCLE
   // ===========================================================================
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _cameraController;
-
     if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused) {
-      if (controller != null &&
-          controller.value.isInitialized) {
-        controller.dispose();
-        _cameraController = null;
+      _appIsActive = false;
+      _cameraStartGeneration++;
+
+      // Remove the controller from the UI before disposing it. Keeping the
+      // disposed CameraPreview for even one frame is what caused the brief red
+      // error screen when an app-open ad was dismissed.
+      final controller = _cameraController;
+      _cameraController = null;
+      if (mounted) {
+        setState(() {
+          _isInitializing = true;
+          _showBrightness = false;
+          _focusPoint = null;
+        });
+      }
+      if (controller != null) {
+        unawaited(_queueCameraDisposal(controller));
       }
 
       _locationService.stopListeningOnly();
@@ -356,11 +729,17 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     }
 
     if (state == AppLifecycleState.resumed) {
-      _loadRecentPhoto();
-      _startLiveLocation();
+      _appIsActive = true;
+      if (!_cameraFeaturesStarted) {
+        unawaited(_checkInternetAndStartCamera());
+        return;
+      }
+
+      unawaited(_loadRecentPhoto());
+      unawaited(_startLiveLocation());
 
       if (_cameras.isNotEmpty) {
-        _startCamera(_currentCameraIndex);
+        unawaited(_startCamera(_currentCameraIndex));
       }
     }
   }
@@ -435,9 +814,7 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     });
 
     try {
-      // Freeze dynamic capture data at shutter time. The camera image itself is
-      // normalized immediately after capture, so later phone rotation cannot
-      // change the review or final saved orientation.
+      // Freeze all dynamic data and orientation at shutter time.
       final capturedAt = DateTime.now();
       final captureOrientation = _deviceOrientation;
 
@@ -452,36 +829,38 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
         );
       }
 
+      if (_settings.shutterSound) {
+        await SystemSound.play(SystemSoundType.click);
+      }
       final XFile capturedPhoto = await controller.takePicture();
 
-      // Normalize the camera JPEG before preview. Android camera files can
-      // keep sensor pixels sideways and rely on EXIF Orientation. Baking that
-      // orientation here gives Capture Preview, saved output and Photo Details
-      // one identical upright pixel source.
-      final normalizedCapture =
-          await CapturedImageOrientationService.normalize(
-        sourcePath: capturedPhoto.path,
-        deviceOrientation: captureOrientation,
-      );
-
       if (!mounted) {
-        await _deleteTemporaryCaptureFiles(
-          capturedPhoto.path,
-          normalizedCapture.path,
-        );
+        await _deleteTemporaryCaptureFiles(capturedPhoto.path);
         return;
       }
 
+      // Open Preview as soon as the camera returns its JPEG. Orientation work
+      // runs in Preview's background preparation phase instead of blocking the
+      // shutter-to-preview transition.
       final result = await Navigator.of(context).push<int>(
         MaterialPageRoute(
           builder: (_) => CapturePreviewScreen(
-            imagePath: normalizedCapture.path,
             originalCameraPath: capturedPhoto.path,
+            captureOrientation: captureOrientation,
             templateIndex: _selectedTemplateIndex,
             stampData: frozenStamp,
             capturedAt: capturedAt,
-            photoAspectRatio: normalizedCapture.aspectRatio,
+            photoAspectRatio: _selectedRatio.resolve(
+              isLandscape:
+                  captureOrientation == DeviceOrientation.landscapeLeft ||
+                      captureOrientation == DeviceOrientation.landscapeRight,
+              nativeCameraRatio: controller.value.aspectRatio,
+            ),
             photoQualitySettings: _photoQuality.current,
+            mirrorHorizontally:
+                controller.description.lensDirection ==
+                        CameraLensDirection.front &&
+                    _settings.mirrorSelfies,
             initialProjectId: widget.initialProjectId,
           ),
         ),
@@ -502,12 +881,10 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Unable to capture photo. Please try again.',
-          ),
-        ),
+      AppTopToast.show(
+        context,
+        message: 'Unable to capture photo. Please try again.',
+        icon: Icons.error_outline_rounded,
       );
     } finally {
       if (mounted) {
@@ -518,11 +895,22 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     }
   }
 
-  Future<void> _deleteTemporaryCaptureFiles(
-    String originalPath,
-    String normalizedPath,
-  ) async {
-    for (final path in <String>{originalPath, normalizedPath}) {
+  Future<void> _captureWithTimer() async {
+    if (_isCapturing || _timerSeconds > 0) return;
+    final seconds = int.tryParse(_settings.timer.replaceAll('s', '')) ?? 0;
+    if (seconds == 0) return _capture();
+    for (var remaining = seconds; remaining > 0; remaining--) {
+      if (!mounted) return;
+      setState(() => _timerSeconds = remaining);
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    if (!mounted) return;
+    setState(() => _timerSeconds = 0);
+    await _capture();
+  }
+
+  Future<void> _deleteTemporaryCaptureFiles(String originalPath) async {
+    for (final path in <String>{originalPath}) {
       try {
         final file = File(path);
         if (await file.exists()) {
@@ -680,27 +1068,76 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     CameraController? controller, {
     double stampBottomInset = 0,
   }) {
-    final isReady = controller != null && controller.value.isInitialized;
+    final isReady = _appIsActive &&
+        controller != null &&
+        controller.value.isInitialized;
 
     return GestureDetector(
+      key: _cameraSurfaceKey,
       behavior: HitTestBehavior.opaque,
-      onTap: _showBrightnessControl,
+      onTapDown: (details) {
+        _showBrightnessControl();
+        unawaited(_focusCamera(details.localPosition));
+      },
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (_isInitializing || !isReady)
-            const ColoredBox(
-              color: Colors.black,
-              child: Center(
-                child: CircularProgressIndicator(color: Colors.white),
-              ),
-            )
+          if (isReady)
+            _buildCameraPreview(controller!)
           else
-            _buildCameraPreview(controller!),
+            const ColoredBox(
+              color: Color(0xFF151515),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.photo_camera_outlined,
+                      color: Colors.white70,
+                      size: 42,
+                    ),
+                    SizedBox(height: 12),
+                    Text(
+                      'Opening camera…',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (_gridOn)
             const Positioned.fill(
               child: IgnorePointer(
                 child: CustomPaint(painter: _CameraGridPainter()),
+              ),
+            ),
+          if (_settings.levelIndicator)
+            const Positioned.fill(child: CameraLevelIndicator()),
+          if (_settings.showGpsAccuracyMeter)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: _GpsAccuracyMeter(value: _stampData.accuracy),
+            ),
+          if (_focusPoint case final point?)
+            Positioned(
+              left: point.dx - 20,
+              top: point.dy - 20,
+              child: const IgnorePointer(child: _FocusRing()),
+            ),
+          if (_timerSeconds > 0)
+            Center(
+              child: Text(
+                '$_timerSeconds',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 72,
+                  fontWeight: FontWeight.w700,
+                  shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                ),
               ),
             ),
           if (isReady)
@@ -728,6 +1165,21 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
                 onInteractionStart: _pauseBrightnessHide,
                 onInteractionEnd: _scheduleBrightnessHide,
                 deviceOrientation: _deviceOrientation,
+                // Top-right corner as the user sees it (see the control).
+                // Full ratio (stampBottomInset > 0): the camera layer runs
+                // behind the toolbar and the shutter / banner ad, so keep the
+                // control clear of them. Other ratios: stay below the GPS
+                // accuracy chip when it is shown.
+                safeInsets: stampBottomInset > 0
+                    ? EdgeInsets.only(
+                        top: 58,
+                        bottom: stampBottomInset,
+                      )
+                    : EdgeInsets.zero,
+                topRightExtraInset:
+                    stampBottomInset == 0 && _settings.showGpsAccuracyMeter
+                        ? 36
+                        : 0,
               ),
             ),
           if (_isCapturing)
@@ -759,6 +1211,10 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
           builder: (context, constraints) {
             final width = constraints.maxWidth;
 
+            // Resolve the banner first so this frame never builds an AdWidget
+            // for an ad that is about to be disposed/replaced.
+            _ensureCameraBanner(width);
+
             final horizontalPadding =
                 width >= 600
                     ? 32.0
@@ -769,8 +1225,17 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
 
             final isFull =
                 _selectedRatio == CameraAspectRatioOption.full;
-            final fullStampBottomInset =
-                shutterSize + (AppSpacing.lg * 2);
+
+            // Keep the live GPS stamp above the shutter controls and the
+            // bottom banner. Include a small visual gap beneath the stamp.
+            // The banner height is dynamic because adaptive banner sizes vary
+            // by device width and availability.
+            final cameraBannerHeight =
+                _cameraBannerAd?.size.height.toDouble() ?? 0.0;
+            final fullStampBottomInset = cameraBannerHeight +
+                shutterSize +
+                (AppSpacing.lg * 2) +
+                12.0;
 
             final controls = Column(
               children: [
@@ -908,7 +1373,7 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
                         GestureDetector(
                           onTap: _isCapturing
                               ? null
-                              : _capture,
+                              : _captureWithTimer,
                           child: AnimatedContainer(
                             duration:
                                 const Duration(
@@ -953,19 +1418,29 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
                     ),
                   ),
                 ),
+
+                // Responsive banner ad anchored below the camera controls.
+                // The banner is optional and never blocks camera use.
+                _buildCameraBanner(),
               ],
             );
 
-            if (!isFull) return controls;
-
+            // IMPORTANT: always return the SAME widget structure (Stack ->
+            // [background, controls]) for every ratio. Previously Full wrapped
+            // `controls` in a Stack while other ratios returned `controls`
+            // directly. That moved the banner's AdWidget to a different spot
+            // in the tree, so the new AdWidget was mounted before the old one
+            // was disposed -> "This AdWidget is already in the Widget tree".
             return Stack(
               fit: StackFit.expand,
               children: [
                 Positioned.fill(
-                  child: _buildCameraSurface(
-                    controller,
-                    stampBottomInset: fullStampBottomInset,
-                  ),
+                  child: isFull
+                      ? _buildCameraSurface(
+                          controller,
+                          stampBottomInset: fullStampBottomInset,
+                        )
+                      : const SizedBox.shrink(),
                 ),
                 controls,
               ],
@@ -986,13 +1461,74 @@ class _LiveCameraScreenState extends State<LiveCameraScreen>
     _settings.removeListener(_onSettingsChanged);
     _photoQuality.removeListener(_onPhotoQualityChanged);
 
-    _cameraController?.dispose();
+    _cameraStartGeneration++;
+    _cameraBannerGeneration++;
+    _cameraBannerRetryTimer?.cancel();
+    _bannerOnlineSubscription?.cancel();
+    _cameraBannerAd?.dispose();
+    _cameraBannerAd = null;
+    final controller = _cameraController;
+    _cameraController = null;
+    if (controller != null) {
+      unawaited(_queueCameraDisposal(controller));
+    }
     _locationSubscription?.cancel();
     _orientationSubscription?.cancel();
+    _volumeButtonSubscription?.cancel();
+    _internetSubscription?.cancel();
     _brightnessHideTimer?.cancel();
+    _focusHideTimer?.cancel();
     _locationService.dispose();
 
     super.dispose();
+  }
+}
+
+class _FocusRing extends StatelessWidget {
+  const _FocusRing();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.amber, width: 2),
+        borderRadius: BorderRadius.circular(4),
+      ),
+    );
+  }
+}
+
+class _GpsAccuracyMeter extends StatelessWidget {
+  const _GpsAccuracyMeter({required this.value});
+
+  final String? value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.gps_fixed_rounded, color: Color(0xFF32D74B), size: 15),
+          const SizedBox(width: 5),
+          Text(
+            value ?? 'GPS locating…',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

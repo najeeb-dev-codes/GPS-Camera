@@ -5,38 +5,42 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/services/ad_service.dart';
 import '../../shared/widgets/widgets.dart';
 import '../settings/photo_quality/models/photo_quality_settings.dart';
+import '../settings/photo_quality/models/photo_processing_result.dart';
 import '../settings/photo_quality/services/photo_quality_processing_service.dart';
 import '../gallery/gallery_screen.dart';
 import '../projects/project_details_screen.dart';
 import '../stamp_templates/stamp_templates_screen.dart';
 import 'save_photo_to_screen.dart';
+import 'services/captured_image_orientation_service.dart';
 import 'widgets/image_responsive_stamp.dart';
 import 'widgets/stamp_layout_metrics.dart';
 
 class CapturePreviewScreen extends StatefulWidget {
   const CapturePreviewScreen({
     super.key,
-    required this.imagePath,
     required this.originalCameraPath,
+    required this.captureOrientation,
     required this.templateIndex,
     required this.stampData,
     required this.capturedAt,
     required this.photoAspectRatio,
     required this.photoQualitySettings,
+    this.mirrorHorizontally = false,
     this.initialProjectId,
   });
 
-  /// Normalized upright PNG used only for review/compositing.
-  final String imagePath;
-
-  /// Untouched camera JPEG used only as the source of safe EXIF fields.
+  /// Untouched camera JPEG used for background preview preparation and as the
+  /// source of safe EXIF fields during final export.
   final String originalCameraPath;
+  final DeviceOrientation captureOrientation;
   final int templateIndex;
   /// Frozen live GPS stamp captured at shutter time.
   final GpsStampData stampData;
@@ -47,6 +51,7 @@ class CapturePreviewScreen extends StatefulWidget {
 
   /// Frozen Photo Quality settings used for this specific capture.
   final PhotoQualitySettings photoQualitySettings;
+  final bool mirrorHorizontally;
   final String? initialProjectId;
 
   @override
@@ -59,10 +64,22 @@ class _CapturePreviewScreenState
   late int _selectedTemplateIndex;
 
   bool _isSaving = false;
+  bool _isPreparingImage = true;
   bool _showSignatureLabel = false;
-  bool _showLocationVerified = false;
-  Timer? _locationVerifiedDelayTimer;
-  Timer? _locationVerifiedHideTimer;
+  bool _showCaptureMessage = false;
+  String? _previewImagePath;
+  String? _preparationError;
+  bool _useFastPreviewDecode = true;
+  bool _showingRawPreview = true;
+  Future<PhotoProcessingResult>? _preparedPhoto;
+  late double _photoAspectRatio;
+  Timer? _captureMessageTimer;
+
+  bool get _actionsLocked => _isPreparingImage || _isSaving;
+
+  double get _displayAspectRatio => _photoAspectRatio > 1
+      ? _photoAspectRatio.clamp(1.0, 4 / 3).toDouble()
+      : _photoAspectRatio;
 
   /// Used to capture only:
   ///
@@ -82,24 +99,68 @@ class _CapturePreviewScreenState
 
     _selectedTemplateIndex =
         widget.templateIndex;
+    _photoAspectRatio = widget.photoAspectRatio > 0
+        ? widget.photoAspectRatio
+        : 4 / 3;
+    _previewImagePath = widget.originalCameraPath;
+    _showCaptureMessage = true;
+    _captureMessageTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) setState(() => _showCaptureMessage = false);
+    });
 
-    _locationVerifiedDelayTimer = Timer(
-      const Duration(seconds: 1),
-      () {
-        if (!mounted) return;
-        setState(() => _showLocationVerified = true);
-
-        _locationVerifiedHideTimer = Timer(
-          const Duration(seconds: 5),
-          () {
-            if (mounted) {
-              setState(() => _showLocationVerified = false);
-            }
-          },
-        );
-      },
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _preparePreviewImage();
+    });
   }
+
+  Future<void> _preparePreviewImage() async {
+    try {
+      // The raw photo is already visible while normalization runs in a
+      // background isolate. This restores the older correct landscape
+      // orientation without showing an image loader after the shutter.
+      final normalized = await CapturedImageOrientationService.normalize(
+        sourcePath: widget.originalCameraPath,
+        deviceOrientation: widget.captureOrientation,
+      );
+      await precacheImage(
+        ResizeImage.resizeIfNeeded(
+          1080,
+          null,
+          FileImage(File(normalized.path)),
+        ),
+        context,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _previewImagePath = normalized.path;
+        _photoAspectRatio = normalized.aspectRatio;
+        _showingRawPreview = false;
+        _isPreparingImage = false;
+      });
+
+      // Start the expensive final-image pipeline as soon as the preview is
+      // ready. Save Photo receives this same in-flight Future later, so the
+      // processing can continue while the user chooses a destination.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startPhotoProcessing();
+      });
+    } catch (error) {
+      debugPrint('Preview preparation error: $error');
+      if (!mounted) return;
+      setState(() {
+        _isPreparingImage = false;
+        _showingRawPreview = true;
+      });
+    }
+  }
+
+  int get _rawPreviewQuarterTurns => switch (widget.captureOrientation) {
+        DeviceOrientation.landscapeLeft => 3,
+        DeviceOrientation.landscapeRight => 1,
+        DeviceOrientation.portraitDown => 2,
+        DeviceOrientation.portraitUp => 0,
+      };
 
   // ===========================================================================
   // FROZEN STAMP DATA
@@ -107,12 +168,31 @@ class _CapturePreviewScreenState
 
   GpsStampData get _stampData => widget.stampData;
 
+  Future<PhotoProcessingResult> _startPhotoProcessing() {
+    final active = _preparedPhoto;
+    if (active != null) return active;
+
+    final future = _preparePhotoForSaving(_captureStampedImage());
+    _preparedPhoto = future;
+
+    // Keep the Future alive even when processing finishes after navigation.
+    // The Save Photo screen attaches to this exact Future instead of starting
+    // another expensive decode/encode pass.
+    unawaited(
+      future.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
+    return future;
+  }
+
   // ===========================================================================
   // RETAKE
   // ===========================================================================
 
   Future<void> _retake() async {
-    if (_isSaving) return;
+    if (_actionsLocked) return;
 
     await _deleteTemporaryFiles();
 
@@ -125,8 +205,8 @@ class _CapturePreviewScreenState
 
   Future<void> _deleteTemporaryFiles() async {
     for (final path in <String>{
-      widget.imagePath,
       widget.originalCameraPath,
+      if (_previewImagePath != null) _previewImagePath!,
     }) {
       try {
         final file = File(path);
@@ -144,7 +224,7 @@ class _CapturePreviewScreenState
   // ===========================================================================
 
   Future<void> _editStamp() async {
-    if (_isSaving) return;
+    if (_actionsLocked || _previewImagePath == null) return;
 
     final selected =
         await Navigator.of(context).push<int>(
@@ -168,6 +248,13 @@ class _CapturePreviewScreenState
       _selectedTemplateIndex =
           selected;
     });
+
+    // The stamp changed, so the previous processed file no longer represents
+    // the preview. Start a new background preparation from the updated stamp.
+    _preparedPhoto = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startPhotoProcessing();
+    });
   }
 
   // ===========================================================================
@@ -176,15 +263,6 @@ class _CapturePreviewScreenState
 
   Future<Uint8List>
       _captureStampedImage() async {
-    // Ensure the coordinate map is decoded before RepaintBoundary captures
-    // the stamp. Without this, a very fast save can burn the loading fallback
-    // into the final photo instead of the map.
-    await _prepareStampAssets();
-
-    // Wait until Flutter completely paints
-    // the current photo + stamp.
-    await WidgetsBinding.instance.endOfFrame;
-
     final context =
         _previewKey.currentContext;
 
@@ -217,9 +295,13 @@ class _CapturePreviewScreenState
     final pixelRatio =
         (targetLongEdge / logicalLongEdge).clamp(1.0, 8.0).toDouble();
 
-    final ui.Image image = await renderObject.toImage(
+    // Start the GPU snapshot before navigation. This keeps the currently
+    // painted preview available even after the destination route becomes
+    // opaque, while navigation itself can proceed without waiting for bytes.
+    final imageFuture = renderObject.toImage(
       pixelRatio: pixelRatio,
     );
+    final ui.Image image = await imageFuture;
 
     try {
       final ByteData? byteData =
@@ -241,73 +323,54 @@ class _CapturePreviewScreenState
     }
   }
 
-  Future<void> _prepareStampAssets() async {
-    try {
-      await precacheImage(
-        const AssetImage('assets/icon/app_icon.png'),
-        context,
-      );
-    } catch (error) {
-      debugPrint('Stamp app icon preload skipped: $error');
-    }
-  }
-
   // ===========================================================================
   // SAVE PHOTO
   // ===========================================================================
 
   Future<void> _savePhoto() async {
-    if (_isSaving) return;
+    if (_actionsLocked || _previewImagePath == null) return;
 
     setState(() {
       _isSaving = true;
     });
 
-    File? processedTemporaryFile;
+    final preparedPhoto = _preparedPhoto ?? _startPhotoProcessing();
+    final interstitial = AdService.instance.showInterstitialIfReady();
+    PhotoProcessingResult? processed;
+    bool cleanupProcessedPhoto = false;
 
     try {
-      final temporaryPhoto = File(widget.imagePath);
-      final originalCameraPhoto = File(widget.originalCameraPath);
+      // The photo snapshot and final processing are already running while the
+      // full-screen ad is visible. If no ad is ready this completes instantly.
+      await interstitial;
+      if (!mounted) return;
 
-      if (!await temporaryPhoto.exists()) {
-        throw Exception('Captured photo was not found.');
-      }
-
-      // 1. Render the exact visible crop + GPS stamp at a resolution that
-      // follows the selected Photo Quality resolution.
-      final stampedBytes = await _captureStampedImage();
-      if (stampedBytes.isEmpty) {
-        throw Exception('Stamped photo data is empty.');
-      }
-
-      // 2. Apply the frozen Photo Quality settings for this capture.
-      final processed = await PhotoQualityProcessingService.process(
-        stampedPngBytes: stampedBytes,
-        originalCameraPath: originalCameraPhoto.path,
-        stampData: widget.stampData,
-        capturedAt: widget.capturedAt,
-        settings: widget.photoQualitySettings,
-      );
-
-      processedTemporaryFile = File(processed.path);
-
-      // 3. Let the user choose Device Gallery or a persistent Project Folder.
-      // The generated image is already stamped and quality-processed, so the
-      // destination screen only decides where the exact same file is stored.
+      // The destination receives the same in-flight processing future, so in
+      // the usual case its preparation has completed while the ad was open.
       final destinationResult = await Navigator.of(context).push<SavePhotoResult>(
         MaterialPageRoute(
           builder: (_) => SavePhotoToScreen(
-            processedImagePath: processed.path,
+            preparedPhoto: preparedPhoto,
+            previewImagePath: _previewImagePath!,
+            originalImagePath: widget.originalCameraPath,
             location: widget.stampData.title ?? widget.stampData.address,
             capturedAt: widget.capturedAt,
             stampData: widget.stampData,
-            captureMetadata: processed.metadata,
             initialProjectId: widget.initialProjectId,
           ),
         ),
       );
 
+      // Returning from Save Photo without saving must keep the processed
+      // cache file alive. The same in-flight Future is intentionally reused
+      // when the user opens Save Photo again.
       if (destinationResult == null || !mounted) return;
+
+      // SavePhotoToScreen only returns a result after the processed image has
+      // actually been saved. From this point it is safe to remove the cached
+      // processed file during final cleanup.
+      cleanupProcessedPhoto = true;
+      processed = await preparedPhoto;
 
       await _deleteTemporaryFiles();
       if (!mounted) return;
@@ -323,16 +386,17 @@ class _CapturePreviewScreenState
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unable to save photo: $error'),
-        ),
+      AppTopToast.show(
+        context,
+        message: 'Unable to save photo: $error',
+        icon: Icons.error_outline_rounded,
       );
     } finally {
       try {
-        final file = processedTemporaryFile;
-        if (file != null && await file.exists()) {
-          await file.delete();
+        final path = cleanupProcessedPhoto ? processed?.path : null;
+        if (path != null) {
+          final file = File(path);
+          if (await file.exists()) await file.delete();
         }
       } catch (_) {}
 
@@ -342,6 +406,23 @@ class _CapturePreviewScreenState
         });
       }
     }
+  }
+
+  Future<PhotoProcessingResult> _preparePhotoForSaving(
+    Future<Uint8List> stampedImage,
+  ) async {
+    final stampedBytes = await stampedImage;
+    if (stampedBytes.isEmpty) {
+      throw Exception('Stamped photo data is empty.');
+    }
+
+    return PhotoQualityProcessingService.process(
+      stampedPngBytes: stampedBytes,
+      originalCameraPath: widget.originalCameraPath,
+      stampData: widget.stampData,
+      capturedAt: widget.capturedAt,
+      settings: widget.photoQualitySettings,
+    );
   }
 
   // ===========================================================================
@@ -360,15 +441,15 @@ class _CapturePreviewScreenState
       },
       child: Scaffold(
         backgroundColor:
-            AppColors.background,
+            Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           backgroundColor:
-              AppColors.background,
+              Theme.of(context).scaffoldBackgroundColor,
           elevation: 0,
           scrolledUnderElevation: 0,
           leading: IconButton(
             onPressed:
-                _isSaving
+                _actionsLocked
                     ? null
                     : _retake,
             icon: const Icon(
@@ -416,40 +497,51 @@ class _CapturePreviewScreenState
                             : double
                                 .infinity,
                   ),
-                  child: Padding(
-                    padding:
-                        EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      8,
-                      horizontalPadding,
-                      18,
-                    ),
-                    child: Column(
+                  child: Column(
                       children: [
-                        _buildSignatureToggle(),
-
-                        _buildLocationVerifiedMessage(),
-
-                        const SizedBox(
-                          height: 8,
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontalPadding,
+                            8,
+                            horizontalPadding,
+                            0,
+                          ),
+                          child: _buildSignatureToggle(),
                         ),
+
+                        const SizedBox(height: 6),
 
                         // =====================================================
                         // PHOTO PREVIEW
                         // =====================================================
 
                         Expanded(
-                          child: Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: horizontalPadding,
+                            ),
+                            child: Center(
                             child: AspectRatio(
-                              aspectRatio: widget.photoAspectRatio > 0
-                                  ? widget.photoAspectRatio
-                                  : 4 / 3,
+                              aspectRatio: _displayAspectRatio,
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  RepaintBoundary(
-                                    key: _previewKey,
-                                    child: LayoutBuilder(
+                                  if (_previewImagePath == null &&
+                                      _preparationError != null)
+                                    Container(
+                                      color: AppColors.inactiveSurface,
+                                      padding: const EdgeInsets.all(24),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        _preparationError!,
+                                        textAlign: TextAlign.center,
+                                        style: AppTypography.bodyMedium,
+                                      ),
+                                    )
+                                  else
+                                    RepaintBoundary(
+                                      key: _previewKey,
+                                      child: LayoutBuilder(
                                       builder: (context, photoConstraints) {
                                         final photoWidth =
                                             photoConstraints.maxWidth;
@@ -472,26 +564,52 @@ class _CapturePreviewScreenState
                                         return Stack(
                                           fit: StackFit.expand,
                                           children: [
-                                            Image.file(
-                                              File(widget.imagePath),
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (
-                                                context,
-                                                error,
-                                                stackTrace,
-                                              ) {
-                                                return Container(
-                                                  color: const Color(
-                                                    0xFFE5E7EB,
-                                                  ),
-                                                  alignment: Alignment.center,
-                                                  child: const Icon(
-                                                    Icons.broken_image_outlined,
-                                                    size: 56,
-                                                    color: Color(0xFF94A3B8),
-                                                  ),
-                                                );
-                                              },
+                                            Transform.flip(
+                                              flipX: widget.mirrorHorizontally,
+                                              child: RotatedBox(
+                                                quarterTurns: _showingRawPreview
+                                                    ? _rawPreviewQuarterTurns
+                                                    : 0,
+                                                child: Image(
+                                                  image: _useFastPreviewDecode
+                                                    ? ResizeImage.resizeIfNeeded(
+                                                        1080,
+                                                        null,
+                                                        FileImage(
+                                                          File(
+                                                            _previewImagePath!,
+                                                          ),
+                                                        ),
+                                                      )
+                                                    : FileImage(
+                                                        File(
+                                                          _previewImagePath!,
+                                                        ),
+                                                      ),
+                                                  fit: BoxFit.cover,
+                                                  gaplessPlayback: true,
+                                                  errorBuilder: (
+                                                    context,
+                                                    error,
+                                                    stackTrace,
+                                                  ) {
+                                                    return Container(
+                                                      color: const Color(
+                                                        0xFFE5E7EB,
+                                                      ),
+                                                      alignment:
+                                                          Alignment.center,
+                                                      child: const Icon(
+                                                        Icons
+                                                            .broken_image_outlined,
+                                                        size: 56,
+                                                        color:
+                                                            Color(0xFF94A3B8),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ),
                                             ),
                                             IgnorePointer(
                                               child: ImageResponsiveStamp(
@@ -535,8 +653,63 @@ class _CapturePreviewScreenState
                                           ],
                                         );
                                       },
+                                      ),
                                     ),
-                                  ),
+                                  if (_showCaptureMessage && !_isSaving)
+                                    Center(
+                                      child: IgnorePointer(
+                                        child: AnimatedOpacity(
+                                          opacity:
+                                              _showCaptureMessage ? 1 : 0,
+                                          duration: const Duration(
+                                            milliseconds: 180,
+                                          ),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.primarySurface,
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                AppRadius.pill,
+                                              ),
+                                              border: Border.all(
+                                                color: AppColors.primaryLight,
+                                              ),
+                                              boxShadow: const [
+                                                BoxShadow(
+                                                  color: Colors.black26,
+                                                  blurRadius: 8,
+                                                  offset: Offset(0, 2),
+                                                ),
+                                              ],
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.check_circle_outline,
+                                                  size: 14,
+                                                  color: AppColors.primary,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Image captured',
+                                                  style: TextStyle(
+                                                    color:
+                                                        AppColors.primaryDark,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   if (_isSaving)
                                     Positioned.fill(
                                       child: Container(
@@ -554,6 +727,7 @@ class _CapturePreviewScreenState
                               ),
                             ),
                           ),
+                          ),
                         ),
 
                         const SizedBox(
@@ -564,8 +738,20 @@ class _CapturePreviewScreenState
                         // ACTION BUTTONS
                         // =====================================================
 
-                        Row(
-                          children: [
+                        const AdBannerWidget(
+                          format: AdDisplayFormat.largeBanner,
+                          reserveSpaceWhileLoading: true,
+                        ),
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontalPadding,
+                            0,
+                            horizontalPadding,
+                            18,
+                          ),
+                          child: Row(
+                            children: [
                             Expanded(
                               child:
                                   _PreviewActionButton(
@@ -575,7 +761,7 @@ class _CapturePreviewScreenState
                                 label:
                                     'Retake',
                                 onTap:
-                                    _isSaving
+                                    _actionsLocked
                                         ? null
                                         : _retake,
                               ),
@@ -594,7 +780,8 @@ class _CapturePreviewScreenState
                                 label:
                                     'Edit Stamp',
                                 onTap:
-                                    _isSaving
+                                    _actionsLocked ||
+                                            _previewImagePath == null
                                         ? null
                                         : _editStamp,
                               ),
@@ -609,24 +796,23 @@ class _CapturePreviewScreenState
                                   _PreviewActionButton(
                                 icon:
                                     Icons
-                                        .check_rounded,
+                                        .arrow_forward_ios,
                                 label:
-                                    'Save Photo',
+                                    'Next',
                                 primary:
                                     true,
-                                loading:
-                                    _isSaving,
                                 onTap:
-                                    _isSaving
+                                    _actionsLocked ||
+                                            _previewImagePath == null
                                         ? null
                                         : _savePhoto,
                               ),
                             ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
-                  ),
                 ),
               );
             },
@@ -637,7 +823,7 @@ class _CapturePreviewScreenState
   }
 
   // ===========================================================================
-  // SIGNATURE PANEL + TEMPORARY LOCATION MESSAGE
+  // SIGNATURE PANEL
   // ===========================================================================
 
   Widget _buildSignatureToggle() {
@@ -651,39 +837,36 @@ class _CapturePreviewScreenState
               : () => setState(
                     () => _showSignatureLabel = !_showSignatureLabel,
                   ),
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Signature panel',
-                  style: AppTypography.h3.copyWith(
-                    color: AppColors.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                SizedBox(
-                  width: 52,
-                  height: 32,
-                  child: FittedBox(
-                    fit: BoxFit.contain,
-                    child: Switch.adaptive(
-                      value: _showSignatureLabel,
-                      activeColor: AppColors.primary,
-                      activeTrackColor:
-                          AppColors.primary.withValues(alpha: 0.45),
-                      onChanged: _isSaving
-                          ? null
-                          : (enabled) {
-                              setState(() {
-                                _showSignatureLabel = enabled;
-                              });
-                            },
+                Expanded(
+                  child: Text(
+                    'Signature Panel',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textPrimary,
                     ),
                   ),
+                ),
+                AppToggle(
+                  value: _showSignatureLabel,
+                  onChanged: _isSaving
+                      ? null
+                      : (enabled) {
+                          setState(() {
+                            _showSignatureLabel = enabled;
+                          });
+
+                          // The signature is part of the final stamped bitmap.
+                          // Rebuild the background preparation so Save receives
+                          // the latest version, without doing the work on Next.
+                          _preparedPhoto = null;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            _startPhotoProcessing();
+                          });
+                        },
                 ),
               ],
             ),
@@ -693,40 +876,9 @@ class _CapturePreviewScreenState
     );
   }
 
-  Widget _buildLocationVerifiedMessage() {
-    return SizedBox(
-      height: 42,
-      child: AnimatedOpacity(
-        opacity: _showLocationVerified ? 1 : 0,
-        duration: const Duration(milliseconds: 220),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.location_on_rounded,
-              size: 19,
-              color: Color(0xFF169447),
-            ),
-            SizedBox(width: 5),
-            Text(
-              'Location verified',
-              style: TextStyle(
-                color: Color(0xFF169447),
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   void dispose() {
-    _locationVerifiedDelayTimer?.cancel();
-    _locationVerifiedHideTimer?.cancel();
+    _captureMessageTimer?.cancel();
     super.dispose();
   }
 
@@ -743,27 +895,30 @@ class _PreviewActionButton
     required this.label,
     required this.onTap,
     this.primary = false,
-    this.loading = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
   final bool primary;
-  final bool loading;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
     final foregroundColor =
-        primary
+        !enabled
+            ? AppColors.textSecondary
+            : primary
             ? Colors.white
             : AppColors.textPrimary;
 
     return Material(
       color:
-          primary
+          !enabled
+              ? AppColors.inactiveSurface
+              : primary
               ? AppColors.primary
-              : AppColors.white,
+              : AppColors.surface,
       borderRadius:
           BorderRadius.circular(
         AppRadius.md,
@@ -797,57 +952,29 @@ class _PreviewActionButton
                                 .border,
                       ),
           ),
-          child:
-              loading
-                  ? const Center(
-                      child:
-                          SizedBox(
-                        width: 22,
-                        height: 22,
-                        child:
-                            CircularProgressIndicator(
-                          strokeWidth:
-                              2,
-                          color:
-                              Colors.white,
-                        ),
-                      ),
-                    )
-                  : Column(
-                      mainAxisAlignment:
-                          MainAxisAlignment
-                              .center,
-                      children: [
-                        Icon(
-                          icon,
-                          size: 21,
-                          color:
-                              foregroundColor,
-                        ),
-                        const SizedBox(
-                          height: 5,
-                        ),
-                        FittedBox(
-                          fit:
-                              BoxFit
-                                  .scaleDown,
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            style:
-                                AppTypography
-                                    .caption
-                                    .copyWith(
-                              color:
-                                  foregroundColor,
-                              fontWeight:
-                                  FontWeight
-                                      .w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 21,
+                color: foregroundColor,
+              ),
+              const SizedBox(height: 5),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: AppTypography.caption.copyWith(
+                    color: foregroundColor,
+                    fontWeight:
+                        primary ? FontWeight.w600 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

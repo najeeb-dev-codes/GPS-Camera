@@ -1,10 +1,8 @@
-
-
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
 import '../../../core/theme/app_typography.dart';
+import '../feedback/app_connectivity_status.dart';
 
 /// Standard top bar: optional back arrow, title, optional trailing actions.
 ///
@@ -21,6 +19,7 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     this.onLeadingTap,
     this.backgroundColor,
     this.foregroundColor,
+    this.showConnectivityStatus = false,
   });
 
   final String title;
@@ -40,15 +39,19 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
   final Color? backgroundColor;
   final Color? foregroundColor;
 
+  /// Places the offline badge after the trailing action icons.
+  final bool showConnectivityStatus;
+
   @override
   Size get preferredSize => const Size.fromHeight(56);
 
   @override
   Widget build(BuildContext context) {
-    final fg = foregroundColor ?? AppColors.textPrimary;
+    final colors = Theme.of(context).colorScheme;
+    final fg = foregroundColor ?? colors.onSurface;
 
     return AppBar(
-      backgroundColor: backgroundColor ?? AppColors.white,
+      backgroundColor: backgroundColor ?? colors.surface,
       foregroundColor: fg,
       surfaceTintColor: Colors.transparent,
       shadowColor: Colors.transparent,
@@ -71,12 +74,13 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
         title,
         style: AppTypography.h3.copyWith(
           color: fg,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
         ),
       ),
       actions: [
         ...actions,
+        if (showConnectivityStatus) const AppConnectivityStatus(),
         const SizedBox(width: AppSpacing.sm),
       ],
     );

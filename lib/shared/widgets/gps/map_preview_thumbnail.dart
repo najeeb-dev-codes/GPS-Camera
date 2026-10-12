@@ -53,7 +53,7 @@ class MapPreviewThumbnail extends StatelessWidget {
           alignment: Alignment.center,
           child: Icon(
             Icons.location_off_rounded,
-            color: AppColors.textSecondary,
+            color: AppColors.lightTextSecondary,
             size: size * 0.38,
           ),
         ),
@@ -84,7 +84,7 @@ class MapPreviewThumbnail extends StatelessWidget {
                 TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.gps_camera_app',
+                  userAgentPackageName: 'com.raiyaan_infotech.gpsmark',
                   maxNativeZoom: 19,
                 ),
               ],

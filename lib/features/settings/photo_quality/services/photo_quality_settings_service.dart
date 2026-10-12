@@ -33,11 +33,14 @@ class PhotoQualitySettingsService extends ChangeNotifier {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedResolution = prefs.getString(_resolutionKey);
 
     _settings = PhotoQualitySettings(
-      resolution: PhotoResolutionOption.fromName(
-        prefs.getString(_resolutionKey),
-      ),
+      // High is the default when no resolution has been saved yet.
+      // An explicitly selected user's resolution is preserved.
+      resolution: savedResolution == null
+          ? PhotoQualitySettings.defaultResolution
+          : PhotoResolutionOption.fromName(savedResolution),
       format: PhotoImageFormatOption.fromName(
         prefs.getString(_formatKey),
       ),
@@ -47,12 +50,22 @@ class PhotoQualitySettingsService extends ChangeNotifier {
       watermarkCompression: WatermarkCompressionOption.fromName(
         prefs.getString(_watermarkKey),
       ),
-      preserveExifMetadata: prefs.getBool(_preserveExifKey) ?? true,
+      preserveExifMetadata: prefs.getBool(_preserveExifKey) ?? false,
       embedGpsInExif: prefs.getBool(_embedGpsKey) ?? true,
     );
 
     _loaded = true;
     _loading = null;
+
+    // Store the default so future loads have an explicit High value while
+    // keeping any existing user-selected resolution unchanged.
+    if (savedResolution == null) {
+      await prefs.setString(
+        _resolutionKey,
+        PhotoQualitySettings.defaultResolution.name,
+      );
+    }
+
     notifyListeners();
   }
 
@@ -65,7 +78,11 @@ class PhotoQualitySettingsService extends ChangeNotifier {
   }
 
   void setJpegQuality(double value) {
-    _update(_settings.copyWith(jpegQuality: value.round().clamp(1, 100).toInt()));
+    _update(
+      _settings.copyWith(
+        jpegQuality: value.round().clamp(1, 100).toInt(),
+      ),
+    );
   }
 
   void setHdrCapture(bool value) {
@@ -90,6 +107,11 @@ class PhotoQualitySettingsService extends ChangeNotifier {
 
   void reset() {
     _update(const PhotoQualitySettings());
+  }
+
+  Future<void> save() async {
+    await ensureLoaded();
+    await _persist();
   }
 
   void _update(PhotoQualitySettings next) {

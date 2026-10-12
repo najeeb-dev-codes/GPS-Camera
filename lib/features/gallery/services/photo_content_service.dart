@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/constants/app_brand.dart';
 import '../../../core/services/captured_photo_service.dart';
 
 class ResolvedPhotoContent {
@@ -35,7 +36,7 @@ class PhotoContentService {
       final extension = _extensionOf(file.path);
       return ResolvedPhotoContent(
         file: file,
-        fileName: 'GPSCamera_${photo.id}.$extension',
+        fileName: '${AppBrand.photoFilePrefix}_${photo.id}.$extension',
         mimeType: _mimeType(extension),
         isTemporary: false,
       );
@@ -50,7 +51,7 @@ class PhotoContentService {
     final extension = _extensionOf(assetPath);
     final temporaryDirectory = await getTemporaryDirectory();
     final file = File(
-      '${temporaryDirectory.path}/GPSCamera_sample_'
+      '${temporaryDirectory.path}/${AppBrand.photoFilePrefix}_sample_'
       '${DateTime.now().microsecondsSinceEpoch}.$extension',
     );
 

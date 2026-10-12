@@ -1,38 +1,24 @@
-
-
-
-
-
-
-
 plugins {
     id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // The Flutter Gradle Plugin must be applied after the Android plugin.
     id("dev.flutter.flutter-gradle-plugin")
-     // Add the Google services Gradle plugin
-  id("com.google.gms.google-services")
-
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 android {
-    namespace = "com.example.gps_camera_app"
+    namespace = "com.raiyaan_infotech.gpsmark"
     compileSdk = 37
-    // compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
-
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.gps_camera_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // minSdk = flutter.minSdkVersion
+        applicationId = "com.raiyaan_infotech.gpsmark"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -41,9 +27,15 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Development/testing signing. Replace with a private release
+            // signing configuration before publishing to Google Play.
             signingConfig = signingConfigs.getByName("debug")
+
+            // WorkManager 2.7.0 and Room 2.2.5 were being optimized by R8 in
+            // the previous release APK. WorkManager starts before Flutter and
+            // then failed to create WorkDatabase, causing an immediate crash.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
@@ -57,20 +49,19 @@ kotlin {
 flutter {
     source = "../.."
 }
+
 dependencies {
-coreLibraryDesugaring(
-    "com.android.tools:desugar_jdk_libs:2.1.5"
-)
+    coreLibraryDesugaring(
+        "com.android.tools:desugar_jdk_libs:2.1.5"
+    )
 
-  // Import the Firebase BoM
-  implementation(platform("com.google.firebase:firebase-bom:34.18.0"))
+    // Use a modern WorkManager version compatible with the current Android
+    // build configuration instead of the old 2.7.0 transitive dependency.
+    implementation("androidx.work:work-runtime:2.10.1")
 
-  // When using the BoM, don't specify versions in Firebase dependencies
-  implementation("com.google.firebase:firebase-analytics")
-
-  // Added for device registration: FCM push token + stable per-install ID
-  implementation("com.google.firebase:firebase-messaging")
-
-  // Add the dependencies for any other desired Firebase products
-  // https://firebase.google.com/docs/android/setup#available-libraries
+    // Firebase Android dependencies.
+    implementation(platform("com.google.firebase:firebase-bom:34.18.0"))
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-messaging")
 }

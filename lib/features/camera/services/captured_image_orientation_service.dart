@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -34,47 +35,33 @@ class CapturedImageOrientationService {
   static Future<NormalizedCapturedImage> normalize({
     required String sourcePath,
     required DeviceOrientation deviceOrientation,
+    bool mirrorHorizontally = false,
   }) async {
-    final source = File(sourcePath);
-
-    if (!await source.exists()) {
+    if (!await File(sourcePath).exists()) {
       throw Exception('Captured camera image was not found.');
     }
 
-    final bytes = await source.readAsBytes();
-    final decoded = img.decodeImage(bytes);
-
-    if (decoded == null) {
-      throw Exception('Unable to decode captured camera image.');
-    }
-
-    // First bake any valid EXIF orientation into the actual pixels.
-    img.Image normalized = img.bakeOrientation(decoded);
-
-    // If the activity stayed portrait-locked while the phone was physically
-    // landscape, EXIF can still leave us with portrait dimensions and sideways
-    // content. Rotate only when the dimensions do not already match the frozen
-    // shutter-time orientation. This prevents double rotation.
-    normalized = _rotateForCapturedDeviceOrientation(
-      normalized,
-      deviceOrientation,
-    );
-
     final tempDirectory = await getTemporaryDirectory();
     final id = DateTime.now().microsecondsSinceEpoch;
-    final output = File(
-      '${tempDirectory.path}/gps_camera_normalized_$id.png',
-    );
+    final outputPath =
+        '${tempDirectory.path}/gps_camera_normalized_$id.jpg';
 
-    await output.writeAsBytes(
-      img.encodePng(normalized, level: 3),
-      flush: true,
+    // Full-resolution decode/rotation is CPU intensive. Running it outside the
+    // UI isolate keeps Preview responsive and lets it display one clear loader.
+    final result = await compute(
+      _normalizeInBackground,
+      <String, Object>{
+        'sourcePath': sourcePath,
+        'outputPath': outputPath,
+        'orientation': deviceOrientation.name,
+        'mirror': mirrorHorizontally,
+      },
     );
 
     return NormalizedCapturedImage(
-      path: output.path,
-      width: normalized.width,
-      height: normalized.height,
+      path: outputPath,
+      width: result['width']! as int,
+      height: result['height']! as int,
     );
   }
 
@@ -103,4 +90,38 @@ class CapturedImageOrientationService {
         return image;
     }
   }
+}
+
+Future<Map<String, Object>> _normalizeInBackground(
+  Map<String, Object> request,
+) async {
+  final source = File(request['sourcePath']! as String);
+  final bytes = await source.readAsBytes();
+  final decoded = img.decodeImage(bytes);
+
+  if (decoded == null) {
+    throw Exception('Unable to decode captured camera image.');
+  }
+
+  img.Image normalized = img.bakeOrientation(decoded);
+  normalized = CapturedImageOrientationService._rotateForCapturedDeviceOrientation(
+    normalized,
+    DeviceOrientation.values.byName(request['orientation']! as String),
+  );
+
+  if (request['mirror']! as bool) {
+    normalized = img.flipHorizontal(normalized);
+  }
+
+  // JPEG is substantially faster and smaller than the previous temporary PNG.
+  // The final export still follows the user's selected format and quality.
+  await File(request['outputPath']! as String).writeAsBytes(
+    img.encodeJpg(normalized, quality: 94),
+    flush: false,
+  );
+
+  return <String, Object>{
+    'width': normalized.width,
+    'height': normalized.height,
+  };
 }

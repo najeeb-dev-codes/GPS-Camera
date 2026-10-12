@@ -1,21 +1,24 @@
-import 'dart:io';
-
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/constants/app_brand.dart';
 import '../../core/services/permission_flow_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
+import 'permission_ad_gate.dart';
+import 'permission_recovery_dialog.dart';
 
 class PhotosMediaAccessScreen extends StatefulWidget {
   const PhotosMediaAccessScreen({
     super.key,
+    this.requestOnOpen = false,
+    this.onAutomaticFinished,
     this.onFinished,
   });
 
+  final bool requestOnOpen;
+  final VoidCallback? onAutomaticFinished;
   final VoidCallback? onFinished;
 
   @override
@@ -26,41 +29,22 @@ class PhotosMediaAccessScreen extends StatefulWidget {
 class _PhotosMediaAccessScreenState
     extends State<PhotosMediaAccessScreen> {
   bool _isRequesting = false;
+  bool _automaticRequestFinished = false;
 
-  // ---------------------------------------------------------------------------
-  // PLATFORM-AWARE PERMISSION RESOLUTION
-  // ---------------------------------------------------------------------------
-  //
-  // permission_handler's `Permission.photos` is *supposed* to map itself to
-  // the right underlying Android permission (READ_MEDIA_IMAGES on 13+,
-  // READ_EXTERNAL_STORAGE on 12 and below), but on some OEM builds (MIUI in
-  // particular) that internal SDK-version detection is unreliable and
-  // `.request()` can return `denied`/`restricted` instantly, with no dialog
-  // ever shown, on Android 12 and below.
-  //
-  // To make this work consistently across every Android version (and iOS),
-  // we resolve the SDK level ourselves via device_info_plus and pick the
-  // permission explicitly instead of trusting the plugin's internal guess.
-
-  /// Returns the single [Permission] to request for "photos & media" access
-  /// on this exact device/OS combination.
-  Future<Permission> _resolvePhotoPermission() async {
-    if (!Platform.isAndroid) {
-      // iOS (and any other platform permission_handler supports) — Photos
-      // is the correct, single permission everywhere.
-      return Permission.photos;
+  void _finishAutomaticRequest() {
+    if (!widget.requestOnOpen ||
+        !mounted ||
+        _automaticRequestFinished) {
+      return;
     }
 
-    final androidInfo = await DeviceInfoPlugin().androidInfo;
-    final sdkInt = androidInfo.version.sdkInt;
-
-    if (sdkInt >= 33) {
-      // Android 13+ (API 33+): granular media permission.
-      return Permission.photos;
+    _automaticRequestFinished = true;
+    final onFinished = widget.onAutomaticFinished;
+    if (onFinished != null) {
+      onFinished();
+      return;
     }
-
-    // Android 12 (API 32) and below: legacy storage permission.
-    return Permission.storage;
+    Navigator.of(context).pop();
   }
 
   Future<void> _allowPhotoAccess() async {
@@ -71,56 +55,42 @@ class _PhotosMediaAccessScreenState
     });
 
     try {
-      final permission = await _resolvePhotoPermission();
-
-      if (!mounted) return;
-
-      final currentStatus = await permission.status;
-
-      // -----------------------------------------------------------------------
-      // Already granted
-      // -----------------------------------------------------------------------
-
-      if (currentStatus.isGranted || currentStatus.isLimited) {
+      if (await PermissionFlowService.isPhotosGranted()) {
         await _photoPermissionGranted();
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // Request the resolved permission
-      // -----------------------------------------------------------------------
+      final needsWarning =
+          await PermissionFlowService.shouldShowRequestWarning(
+        ManagedAppPermission.gallery,
+      );
+      if (needsWarning && mounted) {
+        await PermissionRecoveryDialog.showRepeatDenialToast(
+          context,
+          const [ManagedAppPermission.gallery],
+        );
+      }
 
-      final result = await permission.request();
+      final granted = await PermissionFlowService.requestPermission(
+        ManagedAppPermission.gallery,
+      );
 
       if (!mounted) return;
 
-      if (result.isGranted || result.isLimited) {
+      if (granted) {
         await _photoPermissionGranted();
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // Permanently denied
-      // -----------------------------------------------------------------------
-
-      if (result.isPermanentlyDenied) {
-        await _showPermissionSettingsDialog();
-        return;
-      }
-
-      // -----------------------------------------------------------------------
-      // Denied / restricted
-      // -----------------------------------------------------------------------
-
-      setState(() {
-        _isRequesting = false;
-      });
+      if (mounted) setState(() => _isRequesting = false);
+      _finishAutomaticRequest();
     } catch (_) {
       if (!mounted) return;
 
       setState(() {
         _isRequesting = false;
       });
+      _finishAutomaticRequest();
     }
   }
 
@@ -135,6 +105,16 @@ class _PhotosMediaAccessScreenState
       _isRequesting = false;
     });
 
+    if (widget.requestOnOpen) {
+      _finishAutomaticRequest();
+      return;
+    }
+
+    if (widget.onFinished != null) {
+      widget.onFinished!();
+      return;
+    }
+
     await PermissionFlowService.advance(context, from: PermissionStep.photos);
   }
 
@@ -143,49 +123,12 @@ class _PhotosMediaAccessScreenState
   // ---------------------------------------------------------------------------
 
   Future<void> _notNow() async {
+    if (widget.onFinished != null) {
+      widget.onFinished!();
+      return;
+    }
+
     await PermissionFlowService.advance(context, from: PermissionStep.photos);
-  }
-
-  // ---------------------------------------------------------------------------
-  // SETTINGS
-  // ---------------------------------------------------------------------------
-
-  Future<void> _showPermissionSettingsDialog() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isRequesting = false;
-    });
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text(
-            'Photo access required',
-          ),
-          content: const Text(
-            'Photo access has been disabled for GeoStamp Camera. '
-            'In Settings, select Permissions and allow photo access.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await openAppSettings();
-              },
-              child: const Text('Manage App Permissions'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -195,11 +138,12 @@ class _PhotosMediaAccessScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
 
       appBar: AppTopBar(
         title: '',
-        onBack: _notNow,
+        showBack: !widget.requestOnOpen,
+        onBack: () => Navigator.of(context).pop(),
       ),
 
       body: SafeArea(
@@ -224,6 +168,14 @@ class _PhotosMediaAccessScreenState
                     ),
                     child: Column(
                       children: [
+                        if (widget.requestOnOpen) ...[
+                          PermissionAdGate(
+                            onReady: () {
+                              _allowPhotoAccess();
+                            },
+                          ),
+                          const SizedBox(height: 20),
+                        ],
                         // -----------------------------------------------------
                         // PHOTO ICON
                         // -----------------------------------------------------
@@ -232,7 +184,7 @@ class _PhotosMediaAccessScreenState
                           width: width >= 600 ? 92 : 78,
                           height: width >= 600 ? 92 : 78,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF0E7FF),
+                            color: AppColors.primarySurface,
                             borderRadius: BorderRadius.circular(24),
                           ),
                           alignment: Alignment.center,
@@ -250,7 +202,7 @@ class _PhotosMediaAccessScreenState
                         // -----------------------------------------------------
 
                         Text(
-                          'Save your photos',
+                          'Photos & media',
                           textAlign: TextAlign.center,
                           style: AppTypography.h2.copyWith(
                             fontWeight: FontWeight.w700,
@@ -269,8 +221,8 @@ class _PhotosMediaAccessScreenState
                             maxWidth: 350,
                           ),
                           child: Text(
-                            'Allow access to save your captured '
-                            'photos with GPS stamps to your gallery.',
+                            'Photo access lets ${AppBrand.name} save your captures '
+                            'and show them in the in-app gallery.',
                             textAlign: TextAlign.center,
                             style: AppTypography.body.copyWith(
                               color: AppColors.textSecondary,
@@ -281,14 +233,22 @@ class _PhotosMediaAccessScreenState
                         const SizedBox(height: 18),
 
                         // -----------------------------------------------------
+                        // SITE VISIT GALLERY PREVIEW
+                        // -----------------------------------------------------
+
+                        _buildSiteVisitPreview(),
+
+                        const SizedBox(height: 12),
+
+                        // -----------------------------------------------------
                         // SAVE CAPTURES
                         // -----------------------------------------------------
 
                         _buildInfoCard(
-                          icon: Icons.save_alt_rounded,
-                          title: 'Save Captures',
+                          icon: Icons.download_rounded,
+                          title: 'Save captured photos',
                           description:
-                              'Save geotagged photos to your gallery.',
+                              'Keep stamped photos safely on your device.',
                         ),
 
                         const SizedBox(height: 10),
@@ -299,9 +259,27 @@ class _PhotosMediaAccessScreenState
 
                         _buildInfoCard(
                           icon: Icons.photo_library_outlined,
-                          title: 'Organize Gallery',
+                          title: 'View your gallery',
                           description:
-                              'Keep your captured photos organized.',
+                              'Open and review your saved captures.',
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        _buildInfoCard(
+                          icon: Icons.folder_outlined,
+                          title: 'Organize by project',
+                          description:
+                              'Group related site photos into projects.',
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        _buildInfoCard(
+                          icon: Icons.share_outlined,
+                          title: 'Share & export photos',
+                          description:
+                              'Share captures or export a project as PDF.',
                         ),
 
                         const SizedBox(height: 10),
@@ -317,10 +295,12 @@ class _PhotosMediaAccessScreenState
                             vertical: 12,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF7F2FF),
+                            color: AppColors.primarySurface,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: const Color(0xFFD8C1FF),
+                              color: AppColors.primaryLight.withValues(
+                                alpha: 0.55,
+                              ),
                             ),
                           ),
                           child: Row(
@@ -346,50 +326,240 @@ class _PhotosMediaAccessScreenState
                             ],
                           ),
                         ),
+                        if (!widget.requestOnOpen) ...[
+                          const SizedBox(height: 20),
+                          const AdBannerWidget(
+                            format: AdDisplayFormat.mediumRectangle,
+                            reserveSpaceWhileLoading: true,
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ),
 
-                // -------------------------------------------------------------
-                // BOTTOM ACTIONS
-                // -------------------------------------------------------------
-
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    8,
-                    horizontalPadding,
-                    16,
-                  ),
-                  child: Column(
-                    children: [
-                      AppPrimaryButton(
-                        label: 'Allow Photo Access',
-                        isLoading: _isRequesting,
-                        onPressed: _allowPhotoAccess,
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      TextButton(
-                        onPressed:
-                            _isRequesting ? null : _notNow,
-                        child: Text(
-                          'Not Now',
-                          style: AppTypography.bodyMedium.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             );
           },
         ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // SITE VISIT PREVIEW
+  // ---------------------------------------------------------------------------
+
+  Widget _buildSiteVisitPreview() {
+    const photos = <_SiteVisitPhoto>[
+      _SiteVisitPhoto(
+        assetPath: 'assets/images/construction1.png',
+        location: 'Avadi, Chennai, Tamil Nadu, India',
+        coordinates: '13.1107° N, 80.1080° E',
+        capturedAt: '12 Mar 2024, 10:24 AM',
+      ),
+      _SiteVisitPhoto(
+        assetPath: 'assets/images/construction2.png',
+        location: 'Tiruvallur, Tamil Nadu, India',
+        coordinates: '13.1803° N, 79.9006° E',
+        capturedAt: '14 Mar 2024, 04:17 PM',
+        favorite: true,
+      ),
+      _SiteVisitPhoto(
+        assetPath: 'assets/images/construction3.png',
+        location: 'Chennai, Tamil Nadu, India',
+        coordinates: '13.0827° N, 80.2707° E',
+        capturedAt: '15 Mar 2024, 09:03 AM',
+      ),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: AppColors.primarySurface,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.folder_rounded,
+                  size: 21,
+                  color: AppColors.primary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Site Visit',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      '12 photos',
+                      style: AppTypography.tiny.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.primarySurface,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.check_circle_rounded,
+                      size: 15,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      'Saved to gallery',
+                      style: AppTypography.tiny.copyWith(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          AspectRatio(
+            aspectRatio: 2.15,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var index = 0; index < photos.length; index++) ...[
+                  if (index != 0) const SizedBox(width: 7),
+                  Expanded(child: _buildPhotoPreview(photos[index])),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoPreview(_SiteVisitPhoto photo) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            photo.assetPath,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return ColoredBox(
+                color: AppColors.mutedSurface,
+                child: Icon(
+                  Icons.image_not_supported_outlined,
+                  color: AppColors.textSecondary,
+                ),
+              );
+            },
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(6, 14, 6, 5),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.82),
+                  ],
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.location_on_rounded,
+                    size: 10,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 2),
+                  Expanded(
+                    child: Text(
+                      '${photo.location}\n'
+                      '${photo.coordinates}\n'
+                      '${photo.capturedAt}',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 6.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (photo.favorite)
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Container(
+                width: 25,
+                height: 25,
+                decoration: BoxDecoration(
+                  color: AppColors.neutral700.withValues(alpha: 0.76),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.favorite_rounded,
+                  size: 14,
+                  color: AppColors.red,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -407,7 +577,7 @@ class _PhotosMediaAccessScreenState
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: AppColors.border,
@@ -420,7 +590,7 @@ class _PhotosMediaAccessScreenState
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: const Color(0xFFF0E7FF),
+              color: AppColors.primarySurface,
               borderRadius: BorderRadius.circular(12),
             ),
             alignment: Alignment.center,
@@ -458,4 +628,20 @@ class _PhotosMediaAccessScreenState
       ),
     );
   }
+}
+
+class _SiteVisitPhoto {
+  const _SiteVisitPhoto({
+    required this.assetPath,
+    required this.location,
+    required this.coordinates,
+    required this.capturedAt,
+    this.favorite = false,
+  });
+
+  final String assetPath;
+  final String location;
+  final String coordinates;
+  final String capturedAt;
+  final bool favorite;
 }

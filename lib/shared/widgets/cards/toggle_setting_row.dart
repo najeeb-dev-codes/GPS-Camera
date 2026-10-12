@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimens.dart';
 import '../../../core/theme/app_typography.dart';
+import '../inputs/app_toggle.dart';
 
 /// Label (+ optional subtitle) with a trailing switch.
 ///
@@ -44,10 +45,9 @@ class ToggleSettingRow extends StatelessWidget {
               ],
             ),
           ),
-          Switch.adaptive(
+          AppToggle(
             value: value,
             onChanged: onChanged,
-            activeTrackColor: AppColors.primary,
           ),
         ],
       ),

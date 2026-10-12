@@ -8,9 +8,14 @@ import '../../core/theme/app_dimens.dart';
 import '../../shared/widgets/widgets.dart';
 
 class ProjectMapPanel extends StatelessWidget {
-  const ProjectMapPanel({super.key, required this.photos});
+  const ProjectMapPanel({
+    super.key,
+    required this.photos,
+    this.fullScreen = false,
+  });
 
   final List<CapturedPhoto> photos;
+  final bool fullScreen;
 
   @override
   Widget build(BuildContext context) {
@@ -19,10 +24,13 @@ class ProjectMapPanel extends StatelessWidget {
         .whereType<_PhotoPoint>()
         .toList();
     if (points.isEmpty) {
-      return const EmptyStatePlaceholder(
-        icon: Icons.location_off_outlined,
-        title: 'No mapped photos',
-        description: 'Photos with GPS coordinates will appear here.',
+      return const Align(
+        alignment: Alignment.topCenter,
+        child: EmptyStatePlaceholder(
+          icon: Icons.location_off_outlined,
+          title: 'No mapped photos',
+          description: 'Photos with GPS coordinates will appear here.',
+        ),
       );
     }
 
@@ -33,55 +41,57 @@ class ProjectMapPanel extends StatelessWidget {
           points.length,
     );
 
+    final map = FlutterMap(
+      options: MapOptions(
+        initialCenter: center,
+        initialZoom: _initialZoom(points),
+        minZoom: 2,
+        maxZoom: 19,
+        interactionOptions: const InteractionOptions(
+          flags: InteractiveFlag.all,
+        ),
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          userAgentPackageName: 'com.raiyaan_infotech.gpsmark',
+          maxNativeZoom: 19,
+        ),
+        MarkerLayer(
+          markers: points
+              .map(
+                (item) => Marker(
+                  point: item.point,
+                  width: 42,
+                  height: 50,
+                  alignment: Alignment.bottomCenter,
+                  child: Tooltip(
+                    message: item.label,
+                    child: const Icon(
+                      Icons.location_on_rounded,
+                      size: 42,
+                      color: AppColors.error,
+                      shadows: [
+                        Shadow(color: Colors.black38, blurRadius: 4),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        const RichAttributionWidget(
+          alignment: AttributionAlignment.bottomRight,
+          attributions: [TextSourceAttribution('OpenStreetMap contributors')],
+        ),
+      ],
+    );
+    if (fullScreen) return map;
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.screenPadding),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        child: FlutterMap(
-          options: MapOptions(
-            initialCenter: center,
-            initialZoom: _initialZoom(points),
-            minZoom: 2,
-            maxZoom: 19,
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.all,
-            ),
-          ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.example.gps_camera_app',
-              maxNativeZoom: 19,
-            ),
-            MarkerLayer(
-              markers: points
-                  .map(
-                    (item) => Marker(
-                      point: item.point,
-                      width: 42,
-                      height: 50,
-                      alignment: Alignment.bottomCenter,
-                      child: Tooltip(
-                        message: item.label,
-                        child: const Icon(
-                          Icons.location_on_rounded,
-                          size: 42,
-                          color: AppColors.error,
-                          shadows: [
-                            Shadow(color: Colors.black38, blurRadius: 4),
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-            const RichAttributionWidget(
-              alignment: AttributionAlignment.bottomRight,
-              attributions: [TextSourceAttribution('OpenStreetMap contributors')],
-            ),
-          ],
-        ),
+        child: map,
       ),
     );
   }

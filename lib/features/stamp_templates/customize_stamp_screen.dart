@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/stamp_style_settings.dart';
+import '../../core/models/stamp_template.dart';
 import '../../core/services/app_settings_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
@@ -50,7 +51,11 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
   }
 
   void _applyStyle(StampStyleSettings style) {
-    _showMap = style.showMap;
+    // Map is a permanent part of the Map template. The user can customize
+    // its information fields, but the map itself must never disappear.
+    _showMap = widget.templateIndex == StampTemplate.map.index
+        ? true
+        : style.showMap;
     _address = style.showAddress;
     _coordinates = style.showCoordinates;
     _dateTime = style.showDateTime;
@@ -61,7 +66,9 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
   }
 
   StampStyleSettings get _style => StampStyleSettings(
-        showMap: _showMap,
+        showMap: widget.templateIndex == StampTemplate.map.index
+            ? true
+            : _showMap,
         showAddress: _address,
         showCoordinates: _coordinates,
         showDateTime: _dateTime,
@@ -71,14 +78,16 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
         opacity: _opacity,
       );
 
-  int get _enabledFieldCount => <bool>[
-        _showMap,
-        _address,
-        _coordinates,
-        _dateTime,
-        _compass,
-        _altitude,
-      ].where((enabled) => enabled).length;
+  int get _enabledFieldCount {
+    final editableFields = <bool>[
+      _address,
+      _coordinates,
+      _compass,
+      _altitude,
+      if (widget.templateIndex != StampTemplate.timeAndPlace.index) _dateTime,
+    ];
+    return editableFields.where((enabled) => enabled).length;
+  }
 
   void _changeField({
     required bool currentValue,
@@ -86,13 +95,11 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
     required VoidCallback apply,
   }) {
     if (currentValue && !newValue && _enabledFieldCount <= 2) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('At least two fields must remain enabled.'),
-          ),
-        );
+      AppTopToast.show(
+        context,
+        message: 'At least two fields must remain enabled.',
+        icon: Icons.info_outline_rounded,
+      );
       return;
     }
 
@@ -100,20 +107,24 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
   }
 
   void _reset() {
-    setState(() {
-      final index = widget.templateIndex
-          .clamp(0, kDefaultStampStyles.length - 1)
-          .toInt();
-      _applyStyle(kDefaultStampStyles[index]);
-    });
+    final settings = AppSettingsService.instance;
+    final defaults = settings.resetStampStyle(widget.templateIndex);
+    setState(() => _applyStyle(defaults));
+    AppTopToast.show(
+      context,
+      message: 'Reset successfully',
+      icon: Icons.refresh_rounded,
+      backgroundColor: Colors.green,
+    );
+    Navigator.of(context).pop(false);
   }
 
   void _saveStyle() {
     if (_enabledFieldCount < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Enable at least two fields before saving.'),
-        ),
+      AppTopToast.show(
+        context,
+        message: 'Enable at least two fields before saving.',
+        icon: Icons.info_outline_rounded,
       );
       return;
     }
@@ -123,24 +134,40 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
       widget.templateIndex,
       _style,
     );
+    AppTopToast.show(
+      context,
+      message: 'Changes saved successfully',
+      icon: Icons.check_circle_outline_rounded,
+      backgroundColor: Colors.green,
+    );
     Navigator.of(context).pop(true);
   }
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.stampData ??
-        const GpsStampData(
+    const previewLatitude = 8.7281;
+    const previewLongitude = 77.7081;
+    const fallbackData = GpsStampData(
           address: 'Location preview',
           title: 'Location preview',
           streetAddress: 'Current street and area',
+          latitude: previewLatitude,
+          longitude: previewLongitude,
           coordinates: 'Lat 8.728100° Long 77.708100°',
           dateTime: 'Saturday, 29/08/2026 02:30 PM',
           altitude: 'Altitude 16 m',
           compassDirection: 'NE 45°',
         );
+    final suppliedData = widget.stampData;
+    final data = suppliedData == null
+        ? fallbackData
+        : suppliedData.copyWith(
+            latitude: suppliedData.latitude ?? previewLatitude,
+            longitude: suppliedData.longitude ?? previewLongitude,
+          );
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppTopBar(
         title: 'Customize Stamp',
         actions: [
@@ -149,7 +176,7 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
             child: Text(
               'Reset',
               style: AppTypography.bodyMedium.copyWith(
-                color: AppColors.primary,
+                color: Colors.red,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -186,20 +213,59 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
                             final scale = (_size / 90)
                                 .clamp(0.40, 1.0)
                                 .toDouble();
+                            const badgeInset =
+                                GpsStampTemplateOverlay.compactBadgeInset;
+                            final surfaceHeight =
+                                (previewConstraints.maxWidth * 0.16)
+                                    .clamp(64.0, 88.0)
+                                    .toDouble();
+                            final previewHeight = surfaceHeight + badgeInset;
+                            final isMinimal = widget.templateIndex ==
+                                StampTemplate.minimal.index;
+
                             return Center(
                               child: SizedBox(
-                                width: previewConstraints.maxWidth * scale,
-                                height: 76 * scale,
-                                child: FittedBox(
-                                  fit: BoxFit.fill,
-                                  child: SizedBox(
-                                    width: 520,
-                                    child: GpsStampTemplateOverlay(
-                                      data: data,
-                                      templateIndex: widget.templateIndex,
-                                      compact: true,
-                                      mapSize: 60,
-                                      styleOverride: _style,
+                                width: previewConstraints.maxWidth,
+                                height: previewHeight,
+                                child: Align(
+                                  alignment: Alignment.center,
+                                  child: FractionallySizedBox(
+                                    widthFactor: scale,
+                                    heightFactor: scale,
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadius.sm / 2,
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          top: badgeInset,
+                                        ),
+                                        child: isMinimal
+                                            ? GpsStampTemplateOverlay(
+                                                data: data,
+                                                templateIndex:
+                                                    widget.templateIndex,
+                                                compact: true,
+                                                mapSize: 60,
+                                                styleOverride: _style,
+                                              )
+                                            : FittedBox(
+                                                fit: BoxFit.fill,
+                                                alignment: Alignment.center,
+                                                child: SizedBox(
+                                                  width: 520,
+                                                  child:
+                                                      GpsStampTemplateOverlay(
+                                                    data: data,
+                                                    templateIndex:
+                                                        widget.templateIndex,
+                                                    compact: true,
+                                                    mapSize: 60,
+                                                    styleOverride: _style,
+                                                  ),
+                                                ),
+                                              ),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -209,7 +275,7 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
                         ),
 
                         const SizedBox(height: 20),
-                        const Divider(height: 1, color: AppColors.border),
+                        Divider(height: 1, color: AppColors.border),
 
                         // -----------------------------------------------
                         // VISIBLE FIELDS
@@ -222,17 +288,6 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
                             style: AppTypography.bodyMedium.copyWith(
                               fontWeight: FontWeight.w700,
                             ),
-                          ),
-                        ),
-
-                        ToggleSettingRow(
-                          icon: Icons.map_outlined,
-                          title: 'Map',
-                          value: _showMap,
-                          onChanged: (value) => _changeField(
-                            currentValue: _showMap,
-                            newValue: value,
-                            apply: () => _showMap = value,
                           ),
                         ),
 
@@ -256,16 +311,18 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
                             apply: () => _coordinates = value,
                           ),
                         ),
-                        ToggleSettingRow(
-                          icon: Icons.calendar_today_outlined,
-                          title: 'Date & Time',
-                          value: _dateTime,
-                          onChanged: (value) => _changeField(
-                            currentValue: _dateTime,
-                            newValue: value,
-                            apply: () => _dateTime = value,
+                        if (widget.templateIndex !=
+                            StampTemplate.timeAndPlace.index)
+                          ToggleSettingRow(
+                            icon: Icons.calendar_today_outlined,
+                            title: 'Date & Time',
+                            value: _dateTime,
+                            onChanged: (value) => _changeField(
+                              currentValue: _dateTime,
+                              newValue: value,
+                              apply: () => _dateTime = value,
+                            ),
                           ),
-                        ),
                         ToggleSettingRow(
                           icon: Icons.explore_outlined,
                           title: 'Compass',
@@ -333,7 +390,8 @@ class _CustomizeStampScreenState extends State<CustomizeStampScreen> {
                     16,
                   ),
                   child: AppPrimaryButton(
-                    label: 'Save Style',
+                    label: 'Save Changes',
+                    icon: Icons.save_outlined,
                     onPressed: _saveStyle,
                   ),
                 ),

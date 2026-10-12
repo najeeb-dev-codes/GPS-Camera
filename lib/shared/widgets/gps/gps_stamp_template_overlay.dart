@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/constants/app_brand.dart';
+import '../../../core/models/stamp_template.dart';
 import '../../../core/models/stamp_style_settings.dart';
 import '../../../core/services/app_settings_service.dart';
 import '../../../core/theme/app_colors.dart';
@@ -7,21 +9,16 @@ import '../../../core/theme/app_typography.dart';
 import 'gps_stamp_overlay.dart';
 import 'map_preview_thumbnail.dart';
 
-const List<String> kGpsStampTemplateNames = <String>[
-  'Map',
-  'Default',
-  'QR',
-  'Time & Place',
-  'Minimal',
-];
+final List<String> kGpsStampTemplateNames = kStampTemplateLabels;
 
-/// Shared five-style renderer used by the picker, live camera and saved image.
+/// Shared renderer used by the picker, live camera and saved image.
 class GpsStampTemplateOverlay extends StatelessWidget {
   const GpsStampTemplateOverlay({
     super.key,
     required this.data,
     required this.templateIndex,
     this.compact = false,
+    this.landscapeLayout = false,
     this.mapSize,
     this.styleOverride,
   });
@@ -29,10 +26,17 @@ class GpsStampTemplateOverlay extends StatelessWidget {
   final GpsStampData data;
   final int templateIndex;
   final bool compact;
+  final bool landscapeLayout;
   final double? mapSize;
   final StampStyleSettings? styleOverride;
 
-  int get _index => templateIndex.clamp(0, 4).toInt();
+  /// Space required above a compact stamp for the GPS Mark badge.
+  ///
+  /// The badge intentionally overlaps the top edge of the stamp. Preview
+  /// containers use this value to reserve enough room instead of clipping it.
+  static const double compactBadgeInset = 17;
+
+  int get _index => StampTemplate.fromIndex(templateIndex).index;
   String get _title => data.title ?? data.address;
   String get _address => data.streetAddress ?? data.address;
   String get _coordinates => data.coordinates ?? 'Coordinates unavailable';
@@ -70,14 +74,14 @@ class GpsStampTemplateOverlay extends StatelessWidget {
 
   TextStyle _titleStyle(Color color) => AppTypography.h3.copyWith(
         color: color,
-        fontSize: compact ? 10 : 16,
+        fontSize: compact ? (landscapeLayout ? 12 : 11) : 16,
         fontWeight: FontWeight.w700,
       );
 
   TextStyle _detailStyle(Color color) => AppTypography.stampLabel.copyWith(
         color: color,
-        fontSize: compact ? 8 : 11,
-        height: compact ? 1.20 : 1.35,
+        fontSize: compact ? (landscapeLayout ? 10 : 9) : 11,
+        height: compact ? 1.12 : 1.35,
       );
 
   @override
@@ -87,14 +91,34 @@ class GpsStampTemplateOverlay extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final style = styleOverride ?? settings.stampStyleFor(_index);
-        return Opacity(
-          opacity: (style.opacity / 100).clamp(0.10, 1.0),
-          child: switch (_index) {
-            1 => _locationCard(settings, style),
-            2 => _qrSplit(settings, style),
-            3 => _timeAndPlace(settings, style),
-            4 => _minimalProof(settings, style),
-            _ => _mapProof(settings, style),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : (compact ? 400.0 : 800.0);
+            final sectionGap = (width * 0.02).clamp(4.0, 14.0).toDouble();
+            final stamp = switch (_index) {
+              1 => _locationCard(settings, style, sectionGap),
+              2 => _timeAndPlace(settings, style, sectionGap),
+              3 => _minimalProof(settings, style, sectionGap),
+              _ => _mapProof(settings, style, sectionGap),
+            };
+            final badgeColor = switch (_index) {
+              1 => const Color(0xEC0B0D10),
+              2 => const Color(0xEE0B0D10),
+              3 => AppColors.white.withValues(alpha: 0.96),
+              _ => const Color(0xE8101822),
+            };
+            return Opacity(
+              opacity: (style.opacity / 100).clamp(0.10, 1.0),
+              child: _TopBadgeStamp(
+                compact: compact,
+                landscapeLayout: landscapeLayout,
+                dark: _index != 3,
+                backgroundColor: badgeColor,
+                child: stamp,
+              ),
+            );
           },
         );
       },
@@ -104,21 +128,21 @@ class GpsStampTemplateOverlay extends StatelessWidget {
   Widget _mapProof(
     AppSettingsService settings,
     StampStyleSettings style,
+    double sectionGap,
   ) {
+    final mapVerticalGap = _resolvedMapSize * 0.02;
+    final mapContentSize = _resolvedMapSize - (mapVerticalGap * 2);
     return _StampSurface(
       compact: compact,
       color: const Color(0xE8101822),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (style.showMap) ...[
-            MapPreviewThumbnail(
-              size: _resolvedMapSize,
-              latitude: data.latitude,
-              longitude: data.longitude,
-            ),
-            SizedBox(width: compact ? 6 : 12),
-          ],
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: mapVerticalGap),
+            child: _mapFrame(mapContentSize),
+          ),
+          SizedBox(width: sectionGap),
           Expanded(child: _details(settings, style, dark: true)),
         ],
       ),
@@ -128,54 +152,19 @@ class GpsStampTemplateOverlay extends StatelessWidget {
   Widget _locationCard(
     AppSettingsService settings,
     StampStyleSettings style,
+    double sectionGap,
   ) {
     return _StampSurface(
       compact: compact,
       color: const Color(0xEC0B0D10),
+      rightInsetFactor: 0.04,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (style.showMap) ...[
-            MapPreviewThumbnail(
-              size: _resolvedMapSize,
-              latitude: data.latitude,
-              longitude: data.longitude,
-            ),
-            SizedBox(width: compact ? 6 : 12),
+            _mapFrame(_resolvedMapSize),
+            SizedBox(width: sectionGap),
           ],
-          Expanded(child: _details(settings, style, dark: true)),
-        ],
-      ),
-    );
-  }
-
-  Widget _qrSplit(
-    AppSettingsService settings,
-    StampStyleSettings style,
-  ) {
-    return _StampSurface(
-      compact: compact,
-      color: const Color(0xEC101214),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (style.showMap)
-            MapPreviewThumbnail(
-              size: compact ? 60 : 90,
-              latitude: data.latitude,
-              longitude: data.longitude,
-            )
-          else
-            _LocationCode(
-              value: '${data.latitude},${data.longitude}',
-              size: compact ? 60 : 90,
-            ),
-          Container(
-            width: 1,
-            height: compact ? 60 : 90,
-            margin: EdgeInsets.symmetric(horizontal: compact ? 7 : 14),
-            color: AppColors.white.withValues(alpha: 0.50),
-          ),
           Expanded(child: _details(settings, style, dark: true)),
         ],
       ),
@@ -185,20 +174,17 @@ class GpsStampTemplateOverlay extends StatelessWidget {
   Widget _timeAndPlace(
     AppSettingsService settings,
     StampStyleSettings style,
+    double sectionGap,
   ) {
     return _StampSurface(
       compact: compact,
       color: const Color(0xEE0B0D10),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (style.showMap || style.showDateTime) ...[
             if (style.showMap)
-              MapPreviewThumbnail(
-                size: compact ? 60 : 90,
-                latitude: data.latitude,
-                longitude: data.longitude,
-              )
+              _mapFrame(_resolvedMapSize)
             else
               SizedBox(
                 width: compact ? 70 : 112,
@@ -209,7 +195,7 @@ class GpsStampTemplateOverlay extends StatelessWidget {
                     Text(
                       _timeOnly,
                       style: _titleStyle(AppColors.white).copyWith(
-                        fontSize: compact ? 13 : 22,
+                        fontSize: compact ? (landscapeLayout ? 15 : 14) : 22,
                       ),
                     ),
                     _line(
@@ -222,27 +208,33 @@ class GpsStampTemplateOverlay extends StatelessWidget {
               ),
             Container(
               width: 1,
-              height: compact ? 52 : 78,
-              margin: EdgeInsets.symmetric(horizontal: compact ? 7 : 14),
+              height: _resolvedMapSize,
+              margin: EdgeInsets.symmetric(horizontal: sectionGap),
               color: AppColors.white.withValues(alpha: 0.50),
             ),
           ],
           Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (style.showAddress) _header(dark: true),
-                if (style.showAddress)
-                  _line(
-                    _address,
-                    AppColors.textOnDarkSecondary,
-                    maxLines: 2,
+            child: _StampContentFitter(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (style.showAddress) _header(dark: true),
+                  if (style.showAddress)
+                    _line(
+                      _address,
+                      AppColors.textOnDarkSecondary,
+                      maxLines: 2,
+                    ),
+                  if (style.showCoordinates)
+                    _line(_coordinates, AppColors.textOnDarkSecondary),
+                  _optionalGps(settings, style, AppColors.textOnDarkSecondary),
+                  _bottomRow(
+                    style.showDateTime ? _dateTime : '',
+                    dark: true,
                   ),
-                if (style.showCoordinates)
-                  _line(_coordinates, AppColors.textOnDarkSecondary),
-                _optionalGps(settings, style, AppColors.textOnDarkSecondary),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -253,27 +245,31 @@ class GpsStampTemplateOverlay extends StatelessWidget {
   Widget _minimalProof(
     AppSettingsService settings,
     StampStyleSettings style,
+    double sectionGap,
   ) {
+    final locationIconSize = compact
+        ? (_resolvedMapSize * 0.62).clamp(30.0, 40.0).toDouble()
+        : 44.0;
+
     return _StampSurface(
       compact: compact,
       color: AppColors.white.withValues(alpha: 0.96),
       accent: AppColors.primary,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (style.showMap)
-            MapPreviewThumbnail(
-              size: _resolvedMapSize,
-              latitude: data.latitude,
-              longitude: data.longitude,
-            )
+            _mapFrame(_resolvedMapSize)
           else
-            Icon(
-              Icons.location_on_rounded,
-              color: AppColors.primary,
-              size: compact ? 19 : 28,
+            SizedBox.square(
+              dimension: locationIconSize,
+              child: Icon(
+                Icons.location_on_rounded,
+                color: AppColors.primary,
+                size: locationIconSize,
+              ),
             ),
-          SizedBox(width: compact ? 6 : 11),
+          SizedBox(width: sectionGap),
           Expanded(child: _details(settings, style, dark: false)),
         ],
       ),
@@ -286,22 +282,38 @@ class GpsStampTemplateOverlay extends StatelessWidget {
     required bool dark,
   }) {
     final secondary =
-        dark ? AppColors.textOnDarkSecondary : AppColors.textSecondary;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (style.showAddress) _header(dark: dark),
-        if (style.showAddress) _line(_address, secondary, maxLines: 2),
-        if (style.showCoordinates) _line(_coordinates, secondary),
-        if (style.showDateTime) _line(_dateTime, secondary),
-        _optionalGps(settings, style, secondary),
-      ],
+        dark ? AppColors.textOnDarkSecondary : AppColors.lightTextSecondary;
+    return _StampContentFitter(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (style.showAddress) _header(dark: dark),
+          if (style.showAddress) _line(_address, secondary, maxLines: 2),
+          if (style.showCoordinates) _line(_coordinates, secondary),
+          _optionalGps(settings, style, secondary),
+          _bottomRow(
+            style.showDateTime ? _dateTime : '',
+            dark: dark,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mapFrame(double size) {
+    return SizedBox.square(
+      dimension: size,
+      child: MapPreviewThumbnail(
+        size: size,
+        latitude: data.latitude,
+        longitude: data.longitude,
+      ),
     );
   }
 
   Widget _header({required bool dark}) {
-    final color = dark ? AppColors.white : AppColors.textPrimary;
+    final color = dark ? AppColors.white : AppColors.lightTextPrimary;
     return Row(
       children: [
         Expanded(
@@ -325,11 +337,26 @@ class GpsStampTemplateOverlay extends StatelessWidget {
             ],
           ),
         ),
-        SizedBox(width: compact ? 3 : 7),
-        _AppTag(
-          compact: compact,
-          dark: dark,
-          showIcon: _index != 4,
+      ],
+    );
+  }
+
+  Widget _bottomRow(
+    String value, {
+    required bool dark,
+  }) {
+    final color =
+        dark ? AppColors.textOnDarkSecondary : AppColors.lightTextSecondary;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(
+            value,
+            style: _detailStyle(color),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );
@@ -359,6 +386,7 @@ class GpsStampTemplateOverlay extends StatelessWidget {
         text: data.accuracy!,
         color: color,
         compact: compact,
+        landscapeLayout: landscapeLayout,
       ));
     }
     if (style.showAltitude && data.altitude != null) {
@@ -367,6 +395,7 @@ class GpsStampTemplateOverlay extends StatelessWidget {
         text: data.altitude!,
         color: color,
         compact: compact,
+        landscapeLayout: landscapeLayout,
       ));
     }
     if (style.showCompass && data.compassDirection != null) {
@@ -375,6 +404,7 @@ class GpsStampTemplateOverlay extends StatelessWidget {
         text: data.compassDirection!,
         color: color,
         compact: compact,
+        landscapeLayout: landscapeLayout,
       ));
     }
     if (facts.isEmpty) return const SizedBox.shrink();
@@ -389,45 +419,126 @@ class GpsStampTemplateOverlay extends StatelessWidget {
   }
 }
 
+class _TopBadgeStamp extends StatelessWidget {
+  const _TopBadgeStamp({
+    required this.compact,
+    required this.landscapeLayout,
+    required this.dark,
+    required this.backgroundColor,
+    required this.child,
+  });
+
+  final bool compact;
+  final bool landscapeLayout;
+  final bool dark;
+  final Color backgroundColor;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final badgeHeight = compact ? 20.0 : 32.0;
+    final overlap = compact ? 3.0 : 5.0;
+    return Stack(
+      fit: StackFit.passthrough,
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        Positioned(
+          top: -(badgeHeight - overlap),
+          right: 0,
+          child: _AppTag(
+            compact: compact,
+            landscapeLayout: landscapeLayout,
+            dark: dark,
+            backgroundColor: backgroundColor,
+            showIcon: true,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Scales only textual stamp content when a small device or a long translated
+/// address needs extra room. Map elements remain perfectly square.
+class _StampContentFitter extends StatelessWidget {
+  const _StampContentFitter({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.maxWidth.isFinite) return child;
+        return FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: SizedBox(width: constraints.maxWidth, child: child),
+        );
+      },
+    );
+  }
+}
+
 class _StampSurface extends StatelessWidget {
   const _StampSurface({
     required this.child,
     required this.color,
     required this.compact,
     this.accent,
+    this.rightInsetFactor = 0.02,
   });
 
   final Widget child;
   final Color color;
   final bool compact;
   final Color? accent;
+  final double rightInsetFactor;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(compact ? 8 : 12),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(compact ? 8 : 14),
-        border: accent == null
-            ? Border.all(color: AppColors.white.withValues(alpha: 0.18))
-            : Border(
-                left: BorderSide(
-                  color: accent!,
-                  width: compact ? 3 : 5,
-                ),
-              ),
-        boxShadow: compact
-            ? null
-            : const [
-                BoxShadow(
-                  color: Color(0x26000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 5),
-                ),
-              ],
-      ),
-      child: child,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : (compact ? 400.0 : 800.0);
+        final gap = (width * 0.02).clamp(4.0, 14.0).toDouble();
+        final height = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : (compact ? 80.0 : 140.0);
+        final verticalGap = (height * 0.02).clamp(2.0, 6.0).toDouble();
+        final rightGap = (width * rightInsetFactor).clamp(gap, 40.0).toDouble();
+        return Container(
+          padding: EdgeInsets.fromLTRB(gap, verticalGap, rightGap, verticalGap),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(compact ? 4 : 7),
+              bottomLeft: Radius.circular(compact ? 4 : 7),
+              bottomRight: Radius.circular(compact ? 4 : 7),
+            ),
+            border: accent == null
+                ? Border.all(color: AppColors.white.withValues(alpha: 0.18))
+                : Border(
+                    left: BorderSide(
+                      color: accent!,
+                      width: compact ? 4 : 6,
+                    ),
+                  ),
+            boxShadow: compact
+                ? null
+                : const [
+                    BoxShadow(
+                      color: Color(0x26000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 5),
+                    ),
+                  ],
+          ),
+          child: child,
+        );
+      },
     );
   }
 }
@@ -435,24 +546,27 @@ class _StampSurface extends StatelessWidget {
 class _AppTag extends StatelessWidget {
   const _AppTag({
     required this.compact,
+    required this.landscapeLayout,
     required this.dark,
+    required this.backgroundColor,
     required this.showIcon,
   });
 
   final bool compact;
+  final bool landscapeLayout;
   final bool dark;
+  final Color backgroundColor;
   final bool showIcon;
 
   @override
   Widget build(BuildContext context) {
-    final iconSize = compact ? 20.0 : 28.0;
-    final horizontalPadding = compact ? 4.0 : 7.0;
-    final verticalPadding = compact ? 3.0 : 5.0;
-    final labelSize = compact ? 8.0 : 11.0;
+    final iconSize = compact ? 16.0 : 24.0;
+    final horizontalPadding = compact ? 3.0 : 6.0;
+    final verticalPadding = compact ? 2.0 : 4.0;
+    final labelSize = compact ? (landscapeLayout ? 8.5 : 8.0) : 10.0;
 
     return Container(
       constraints: BoxConstraints(
-        // Minimal has no icon, but its tag keeps the shared tag height.
         minHeight: iconSize + (verticalPadding * 2),
       ),
       padding: EdgeInsets.symmetric(
@@ -460,15 +574,8 @@ class _AppTag extends StatelessWidget {
         vertical: verticalPadding,
       ),
       decoration: BoxDecoration(
-        color: dark
-            ? AppColors.neutral900.withValues(alpha: 0.72)
-            : AppColors.primarySurface,
-        border: Border.all(
-          color: dark
-              ? AppColors.white.withValues(alpha: 0.55)
-              : AppColors.primary.withValues(alpha: 0.22),
-        ),
-        borderRadius: BorderRadius.circular(999),
+        color: backgroundColor,
+        borderRadius: BorderRadius.zero,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -488,7 +595,7 @@ class _AppTag extends StatelessWidget {
             SizedBox(width: compact ? 4 : 6),
           ],
           Text(
-            'GPS Camera',
+            AppBrand.name,
             style: AppTypography.tiny.copyWith(
               color: dark ? AppColors.white : AppColors.primary,
               fontSize: labelSize,
@@ -507,103 +614,34 @@ class _MiniFact extends StatelessWidget {
     required this.text,
     required this.color,
     required this.compact,
+    required this.landscapeLayout,
   });
 
   final IconData icon;
   final String text;
   final Color color;
   final bool compact;
+  final bool landscapeLayout;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: compact ? 7 : 12, color: color),
+        Icon(
+          icon,
+          size: compact ? (landscapeLayout ? 9 : 8) : 12,
+          color: color,
+        ),
         SizedBox(width: compact ? 2 : 3),
         Text(
           text,
           style: AppTypography.tiny.copyWith(
             color: color,
-            fontSize: compact ? 7 : 9.5,
+            fontSize: compact ? (landscapeLayout ? 9 : 8) : 9.5,
           ),
         ),
       ],
     );
   }
-}
-
-class _LocationCode extends StatelessWidget {
-  const _LocationCode({required this.value, required this.size});
-
-  final String value;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      padding: EdgeInsets.all(size * 0.08),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(size < 60 ? 3 : 6),
-      ),
-      child: CustomPaint(painter: _LocationCodePainter(value)),
-    );
-  }
-}
-
-class _LocationCodePainter extends CustomPainter {
-  const _LocationCodePainter(this.value);
-
-  final String value;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const cells = 17;
-    final cell = size.width / cells;
-    final black = Paint()..color = AppColors.neutral900;
-    final white = Paint()..color = AppColors.white;
-    var seed = value.hashCode.abs();
-
-    void finder(int x, int y) {
-      canvas.drawRect(
-        Rect.fromLTWH(x * cell, y * cell, 5 * cell, 5 * cell),
-        black,
-      );
-      canvas.drawRect(
-        Rect.fromLTWH((x + 1) * cell, (y + 1) * cell, 3 * cell, 3 * cell),
-        white,
-      );
-      canvas.drawRect(
-        Rect.fromLTWH((x + 2) * cell, (y + 2) * cell, cell, cell),
-        black,
-      );
-    }
-
-    finder(0, 0);
-    finder(12, 0);
-    finder(0, 12);
-
-    for (var y = 0; y < cells; y++) {
-      for (var x = 0; x < cells; x++) {
-        final inFinder = (x < 5 && y < 5) ||
-            (x >= 12 && y < 5) ||
-            (x < 5 && y >= 12);
-        if (inFinder) continue;
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        if (seed.isEven) {
-          canvas.drawRect(
-            Rect.fromLTWH(x * cell, y * cell, cell, cell),
-            black,
-          );
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LocationCodePainter oldDelegate) =>
-      oldDelegate.value != value;
 }

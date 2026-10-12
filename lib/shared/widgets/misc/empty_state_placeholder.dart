@@ -15,6 +15,7 @@ class EmptyStatePlaceholder extends StatelessWidget {
     required this.icon,
     required this.title,
     this.description,
+    this.titleColor,
     this.ctaLabel,
     this.onCtaTap,
   });
@@ -22,6 +23,7 @@ class EmptyStatePlaceholder extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? description;
+  final Color? titleColor;
   final String? ctaLabel;
   final VoidCallback? onCtaTap;
 
@@ -34,7 +36,11 @@ class EmptyStatePlaceholder extends StatelessWidget {
         children: [
           Icon(icon, size: 48, color: AppColors.neutral400),
           const SizedBox(height: AppSpacing.md),
-          Text(title, style: AppTypography.h3, textAlign: TextAlign.center),
+          Text(
+            title,
+            style: AppTypography.h3.copyWith(color: titleColor),
+            textAlign: TextAlign.center,
+          ),
           if (description != null) ...[
             const SizedBox(height: AppSpacing.xs),
             Text(

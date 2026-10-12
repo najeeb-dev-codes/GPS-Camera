@@ -28,7 +28,7 @@ class StampDefaultsScreen extends StatelessWidget {
     final settings = AppSettingsService.instance;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: const AppTopBar(title: 'Stamp Defaults'),
       body: SafeArea(
         top: false,
@@ -135,7 +135,7 @@ class StampDefaultsScreen extends StatelessWidget {
                             onChanged: (v) => settings.set(() => settings.mapType = v!),
                           ),
 
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                             child: Divider(height: 1, color: AppColors.border),
                           ),
@@ -149,7 +149,7 @@ class StampDefaultsScreen extends StatelessWidget {
 
                           _FieldCheckboxGrid(settings: settings),
 
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                             child: Divider(height: 1, color: AppColors.border),
                           ),
@@ -190,10 +190,10 @@ class StampDefaultsScreen extends StatelessWidget {
                         label: 'Customize Default Stamp',
                         icon: Icons.edit_outlined,
                         onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Opening stamp customization...'),
-                            ),
+                          AppTopToast.show(
+                            context,
+                            message: 'Opening stamp customization...',
+                            icon: Icons.info_outline_rounded,
                           );
                         },
                       ),

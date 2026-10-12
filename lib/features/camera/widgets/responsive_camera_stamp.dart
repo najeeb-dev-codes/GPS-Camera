@@ -76,15 +76,18 @@ class ResponsiveCameraStamp extends StatelessWidget {
               : constraints.maxHeight - (inset * 2);
           final sizeFactor =
               (style.size / 90).clamp(0.45, 1.0).toDouble();
+          final mapHeightFactor = templateIndex == 0 ? 1.02 : 1.0;
           final desiredThickness = (landscape
-                  ? math.min(
-                      availableLongEdge * 0.16,
-                      availableShortEdge * 0.29,
+                  ? StampLayoutMetrics.landscapeStampHeight(
+                      availableLongEdge,
+                      availableShortEdge,
                     )
-                  : StampLayoutMetrics.portraitStampHeight(
+                  : StampLayoutMetrics.portraitTemplateHeight(
                       Size(constraints.maxWidth, constraints.maxHeight),
+                      templateIndex,
                     )) *
-              sizeFactor;
+              sizeFactor *
+              mapHeightFactor;
           final minimumThickness = landscape ? 24.0 : desiredThickness;
           final thickness = desiredThickness
               .clamp(
@@ -97,21 +100,16 @@ class ResponsiveCameraStamp extends StatelessWidget {
             return const SizedBox.shrink();
           }
 
-          final referenceWidth = landscape ? 520.0 : 360.0;
           final stamp = SizedBox(
             width: longEdge,
             height: thickness,
-            child: FittedBox(
-              fit: landscape ? BoxFit.contain : BoxFit.fill,
-              alignment: Alignment.center,
-              child: SizedBox(
-                width: referenceWidth,
-                child: GpsStampTemplateOverlay(
-                  data: data,
-                  templateIndex: templateIndex,
-                  compact: true,
-                  mapSize: landscape ? 52 : 54,
-                ),
+            child: GpsStampTemplateOverlay(
+              data: data,
+              templateIndex: templateIndex,
+              compact: true,
+              landscapeLayout: landscape,
+              mapSize: StampLayoutMetrics.squareElementSize(
+                thickness,
               ),
             ),
           );

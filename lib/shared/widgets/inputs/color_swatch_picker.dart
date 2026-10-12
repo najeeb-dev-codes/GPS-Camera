@@ -45,7 +45,9 @@ class ColorSwatchPicker extends StatelessWidget {
                 ? Icon(
                     Icons.check,
                     size: swatchSize * 0.5,
-                    color: color.computeLuminance() > 0.5 ? AppColors.textPrimary : AppColors.white,
+                    color: color.computeLuminance() > 0.5
+                        ? AppColors.lightTextPrimary
+                        : AppColors.white,
                   )
                 : null,
           ),

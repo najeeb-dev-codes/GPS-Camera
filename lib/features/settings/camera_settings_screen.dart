@@ -6,17 +6,16 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_dimens.dart';
 import '../../shared/widgets/widgets.dart';
 
-/// Settings > Camera Settings.
+/// Settings > Camera.
 ///
 /// Default camera, capture mode, aspect ratio, grid/level/focus/mirror
-/// toggles, shutter sound, volume key action, timer, and "Save original
-/// photo" — with a bottom "Reset Camera Settings" action.
+/// toggles, shutter sound and timer, with a bottom reset action. Volume-key
+/// action and original-photo saving are available directly on Settings.
 class CameraSettingsScreen extends StatelessWidget {
   const CameraSettingsScreen({super.key});
 
   static const _cameras = ['Back Camera', 'Front Camera'];
-  static const _captureModes = ['Photo', 'Video'];
-  static const _volumeActions = ['Capture', 'Zoom', 'None'];
+  static const _captureModes = ['Photo'];
   static const _timers = ['Off', '3s', '5s', '10s'];
 
   @override
@@ -24,8 +23,31 @@ class CameraSettingsScreen extends StatelessWidget {
     final settings = AppSettingsService.instance;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: const AppTopBar(title: 'Camera Settings'),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppTopBar(
+        title: 'Camera',
+        actions: [
+          TextButton(
+            onPressed: () {
+              settings.resetCameraSettings();
+              AppTopToast.show(
+                context,
+                message: 'Reset successfully',
+                icon: Icons.refresh_rounded,
+                backgroundColor: Colors.green,
+              );
+              Navigator.of(context).pop();
+            },
+            child: Text(
+              'Reset',
+              style: const TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         top: false,
         child: ListenableBuilder(
@@ -48,6 +70,7 @@ class CameraSettingsScreen extends StatelessWidget {
                           24,
                         ),
                         children: [
+                          SettingsSectionCard(children: [
                           DropdownSettingRow<String>(
                             title: 'Default camera',
                             value: settings.defaultCamera,
@@ -69,7 +92,7 @@ class CameraSettingsScreen extends StatelessWidget {
                             onChanged: (v) =>
                                 settings.set(() => settings.aspectRatio = v!),
                           ),
-                          const Padding(
+                          Padding(
                             padding:
                                 EdgeInsets.symmetric(vertical: AppSpacing.sm),
                             child: Divider(height: 1, color: AppColors.border),
@@ -113,17 +136,10 @@ class CameraSettingsScreen extends StatelessWidget {
                             onChanged: (v) =>
                                 settings.set(() => settings.shutterSound = v),
                           ),
-                          const Padding(
+                          Padding(
                             padding:
                                 EdgeInsets.symmetric(vertical: AppSpacing.sm),
                             child: Divider(height: 1, color: AppColors.border),
-                          ),
-                          DropdownSettingRow<String>(
-                            title: 'Volume Key Action',
-                            value: settings.volumeKeyAction,
-                            items: _volumeActions,
-                            onChanged: (v) => settings
-                                .set(() => settings.volumeKeyAction = v!),
                           ),
                           DropdownSettingRow<String>(
                             title: 'Timer',
@@ -132,20 +148,11 @@ class CameraSettingsScreen extends StatelessWidget {
                             onChanged: (v) =>
                                 settings.set(() => settings.timer = v!),
                           ),
-                          const Padding(
-                            padding:
-                                EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                            child: Divider(height: 1, color: AppColors.border),
-                          ),
-                          ToggleSettingRow(
-                            title: 'Save original photo',
-                            value: settings.saveOriginalPhoto,
-                            onChanged: (v) => settings
-                                .set(() => settings.saveOriginalPhoto = v),
-                          ),
+                          ]),
                         ],
                       ),
                     ),
+                    const AdBannerWidget(),
                     Padding(
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
@@ -153,15 +160,19 @@ class CameraSettingsScreen extends StatelessWidget {
                         horizontalPadding,
                         16,
                       ),
-                      child: AppSecondaryButton(
-                        label: 'Reset Camera Settings',
-                        icon: Icons.refresh_rounded,
-                        onPressed: () {
-                          settings.resetCameraSettings();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('Camera settings reset')),
+                      child: AppPrimaryButton(
+                        label: 'Save Changes',
+                        icon: Icons.save_outlined,
+                        onPressed: () async {
+                          await settings.saveCameraSettings();
+                          if (!context.mounted) return;
+                          AppTopToast.show(
+                            context,
+                            message: 'Changes saved successfully',
+                            icon: Icons.check_circle_outline_rounded,
+                            backgroundColor: Colors.green,
                           );
+                          Navigator.of(context).pop();
                         },
                       ),
                     ),

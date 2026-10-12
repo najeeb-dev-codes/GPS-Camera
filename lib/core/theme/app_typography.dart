@@ -21,14 +21,14 @@ abstract final class AppTypography {
     double size,
     FontWeight weight,
     double lineHeight, {
-    Color color = AppColors.textPrimary,
+    Color? color,
     double? letterSpacing,
   }) =>
       GoogleFonts.poppins(
         fontSize: size,
         fontWeight: weight,
         height: lineHeight / size,
-        color: color,
+        color: color ?? AppColors.textPrimary,
         letterSpacing: letterSpacing,
       );
 

@@ -50,7 +50,7 @@ class PhotoThumbnailCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           AspectRatio(
-            aspectRatio: 1,
+            aspectRatio: 1.0,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -71,7 +71,7 @@ class PhotoThumbnailCard extends StatelessWidget {
                       // relevant while real capture photos aren't wired
                       // up yet.
                       errorBuilder: (context, error, stackTrace) => Container(
-                        color: AppColors.neutral100,
+                        color: AppColors.mutedSurface,
                         alignment: Alignment.center,
                         child: const Icon(
                           Icons.image_outlined,
@@ -83,13 +83,17 @@ class PhotoThumbnailCard extends StatelessWidget {
                   ),
                 ),
                 if (showSelectionCheck && selected)
-                  const Positioned(
+                  Positioned(
                     top: 6,
                     right: 6,
                     child: CircleAvatar(
                       radius: 10,
                       backgroundColor: AppColors.primary,
-                      child: Icon(Icons.check, size: 12, color: AppColors.white),
+                      child: const Icon(
+                        Icons.check,
+                        size: 12,
+                        color: AppColors.white,
+                      ),
                     ),
                   ),
                 if (trailing != null) Positioned(top: 6, right: 6, child: trailing!),

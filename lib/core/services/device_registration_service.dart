@@ -190,6 +190,7 @@ class DeviceRegistrationService {
 
     return DeviceRegistrationPayload(
       installationId: installationId,
+      packageName: snapshot.packageName,
       firebaseInstallationId: firebaseInstallationId,
       fcmToken: fcmToken,
       hardwareId: snapshot.hardwareId,

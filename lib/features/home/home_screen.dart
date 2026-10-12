@@ -10,8 +10,11 @@ import '../../core/theme/app_typography.dart';
 import '../../shared/widgets/widgets.dart';
 import '../camera/live_camera_screen.dart';
 import '../gallery/photo_details_screen.dart';
+import '../notifications/notifications_screen.dart';
+import '../notifications/services/notification_repository.dart';
 import '../projects/project_data.dart';
 import '../projects/project_details_screen.dart';
+import '../projects/recent_projects_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -52,7 +55,9 @@ class _HomeScreenState extends State<HomeScreen> {
   // ===========================================================================
 
   final ProjectRepository _projectRepository = ProjectRepository.instance;
-  ProjectData? _recentProject;
+  final NotificationRepository _notificationRepository =
+      NotificationRepository.instance;
+  List<ProjectData> _recentProjects = <ProjectData>[];
 
   // ===========================================================================
   // INIT
@@ -62,21 +67,26 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _projectRepository.addListener(_refreshProject);
+    _notificationRepository.addListener(_refreshNotifications);
+    _notificationRepository.ensureLoaded();
     _loadRecentCaptures();
   }
 
   void _refreshProject() {
     if (!mounted) return;
     setState(() {
-      _recentProject = _projectRepository.projects.isEmpty
-          ? null
-          : _projectRepository.projects.first;
+      _recentProjects = _projectRepository.projects;
     });
+  }
+
+  void _refreshNotifications() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _projectRepository.removeListener(_refreshProject);
+    _notificationRepository.removeListener(_refreshNotifications);
     super.dispose();
   }
 
@@ -98,10 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
         //
         // Only show latest 5 photos on Home Screen.
         _recentCaptures = photos.take(5).toList();
-        _recentProject = _projectRepository.projects.isEmpty
-            ? null
-            : _projectRepository.projects.first;
-
+        _recentProjects = _projectRepository.projects;
         _isLoadingCaptures = false;
       });
     } catch (e) {
@@ -141,22 +148,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // -------------------------------------------------------------------------
 
     await _loadRecentCaptures();
-  }
-
-  // ===========================================================================
-  // COMING SOON
-  // ===========================================================================
-
-  void _showComingSoon(
-    BuildContext context, {
-    required String featureName,
-    required IconData icon,
-  }) {
-    ComingSoonDialog.show(
-      context,
-      featureName: featureName,
-      icon: icon,
-    );
   }
 
   // ===========================================================================
@@ -237,6 +228,16 @@ class _HomeScreenState extends State<HomeScreen> {
     AppNavigator.goToProjects(context);
   }
 
+  void _handleViewAllRecentProjects(
+    BuildContext context,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const RecentProjectsScreen(),
+      ),
+    );
+  }
+
   void _handleRecentProjectTap(
     BuildContext context,
     ProjectData project,
@@ -251,40 +252,6 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => ProjectDetailsScreen(projectId: project.id),
       ),
     );
-  }
-
-  // ===========================================================================
-  // FORMAT DATE / TIME
-  // ===========================================================================
-
-  String _formatCapturedTime(
-    DateTime value,
-  ) {
-    final day = value.day.toString().padLeft(
-          2,
-          '0',
-        );
-
-    final month = value.month.toString().padLeft(
-          2,
-          '0',
-        );
-
-    final hour = value.hour % 12 == 0
-        ? 12
-        : value.hour % 12;
-
-    final minute = value.minute.toString().padLeft(
-          2,
-          '0',
-        );
-
-    final period = value.hour >= 12
-        ? 'PM'
-        : 'AM';
-
-    return '$day/$month/${value.year} - '
-        '$hour:$minute $period';
   }
 
   // ===========================================================================
@@ -308,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
   ) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
 
       // =======================================================================
       // APP BAR
@@ -317,19 +284,44 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppTopBar(
         title: 'Home',
         showBack: false,
+        showConnectivityStatus: true,
         actions: [
           IconButton(
             tooltip: 'Notifications',
-            icon: const Icon(
-              Icons.notifications_none_rounded,
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.notifications_none_rounded),
+                if (_notificationRepository.unreadCount > 0)
+                  Positioned(
+                    top: -5,
+                    right: -7,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 16),
+                      height: 16,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: const BoxDecoration(
+                        color: AppColors.error,
+                        borderRadius: BorderRadius.all(Radius.circular(8)),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        _notificationRepository.unreadCount > 9
+                            ? '9+'
+                            : '${_notificationRepository.unreadCount}',
+                        style: const TextStyle(
+                          color: AppColors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            onPressed: () {
-              _showComingSoon(
-                context,
-                featureName: 'Notifications',
-                icon: Icons.notifications_none_rounded,
-              );
-            },
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            ),
           ),
         ],
       ),
@@ -352,7 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 isWide ? 720.0 : double.infinity;
 
             final captureThumbSize =
-                isWide ? 170.0 : 145.0;
+                isWide ? 150.0 : 126.0;
 
             final horizontalPadding =
                 isWide
@@ -382,11 +374,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       _SectionHeader(
                         title: 'Recent Captures',
-                        onViewAll: () {
-                          _handleViewAllCaptures(
-                            context,
-                          );
-                        },
+                        onViewAll: _recentCaptures.length > 3
+                            ? () {
+                                _handleViewAllCaptures(
+                                  context,
+                                );
+                              }
+                            : null,
                       ),
 
                       const SizedBox(
@@ -410,9 +404,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       // =======================================================
 
                       else if (_recentCaptures.isEmpty)
-                        const EmptyStatePlaceholder(
+                        EmptyStatePlaceholder(
                           icon: Icons.photo_camera_outlined,
                           title: 'No captures yet',
+                          titleColor: AppColors.textSecondary,
                           description:
                               'Photos you take will show up here.',
                         )
@@ -423,7 +418,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       else
                         SizedBox(
-                          height: captureThumbSize + 88,
+                          height: captureThumbSize,
                           child: ListView.separated(
                             scrollDirection:
                                 Axis.horizontal,
@@ -445,8 +440,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   _recentCaptures[index];
 
                               return SizedBox(
-                                width:
-                                    captureThumbSize + 10,
+                                width: captureThumbSize,
                                 child:
                                     PhotoThumbnailCard(
                                   // ===========================================
@@ -458,29 +452,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                     File(
                                       capture.path,
                                     ),
-                                  ),
-
-                                  // ===========================================
-                                  // TITLE
-                                  // ===========================================
-
-                                  titleLabel:
-                                      'GPS Capture',
-
-                                  // ===========================================
-                                  // REAL LOCATION
-                                  // ===========================================
-
-                                  locationLabel:
-                                      capture.location,
-
-                                  // ===========================================
-                                  // REAL CAPTURE TIME
-                                  // ===========================================
-
-                                  timestampLabel:
-                                      _formatCapturedTime(
-                                    capture.capturedAt,
                                   ),
 
                                   onTap: () {
@@ -495,46 +466,67 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
 
+                      const SizedBox(height: AppSpacing.lg),
+
+                      // Full-width banner between recent photos and projects.
                       const SizedBox(
-                        height: AppSpacing.xxl,
+                        width: double.infinity,
+                        child: AdBannerWidget(
+                          format: AdDisplayFormat.adaptiveBanner,
+                          reserveSpaceWhileLoading: true,
+                          slotHeight: 80,
+                        ),
                       ),
+
+                      const SizedBox(height: AppSpacing.lg),
 
                       // =======================================================
                       // PROJECTS
                       // =======================================================
 
                       _SectionHeader(
-                        title: 'Projects',
-                        onViewAll: () {
-                          _handleViewAllProjects(
-                            context,
-                          );
-                        },
+                        title: 'Recent Projects',
+                        onViewAll: _recentProjects.length > 3
+                            ? () => _handleViewAllRecentProjects(context)
+                            : null,
                       ),
 
                       const SizedBox(
                         height: AppSpacing.md,
                       ),
 
-                      if (_recentProject != null)
-                        ProjectCard(
-                          name: _recentProject!.name,
-                          location: _recentProject!.location,
-                          photoCount: _recentProject!.photoCount,
-                          updatedLabel: 'Recently updated',
-                          imageProvider: _recentProject!.recentPhoto == null
-                              ? null
-                              : FileImage(File(_recentProject!.recentPhoto!.path)),
-                          showChevron: true,
-                          onTap: () =>
-                              _handleRecentProjectTap(context, _recentProject!),
+                      if (_recentProjects.isNotEmpty)
+                        ..._recentProjects.take(3).map(
+                          (project) => Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: AppSpacing.md,
+                            ),
+                            child: ProjectCard(
+                              name: project.name,
+                              location: project.location,
+                              photoCount: project.photoCount,
+                              coverColor: Color(project.colorValue),
+                              updatedLabel: 'Today',
+                              imageProvider: project.coverImagePath != null &&
+                                      !isGeneratedProjectNameCover(project.coverImagePath) &&
+                                      File(project.coverImagePath!).existsSync()
+                                  ? FileImage(File(project.coverImagePath!))
+                                  : null,
+                              showChevron: true,
+                              onTap: () =>
+                                  _handleRecentProjectTap(context, project),
+                            ),
+                          ),
                         )
                       else
-                        const EmptyStatePlaceholder(
+                        EmptyStatePlaceholder(
                           icon: Icons.folder_open_outlined,
-                          title: 'No projects yet',
-                          description: 'Create a project to organize photos.',
+                          title: 'No recent projects',
+                          titleColor: AppColors.textSecondary,
+                          description:
+                              'Projects created or with photos added or moved today will show up here.',
                         ),
+
                     ],
                   ),
                 ),
@@ -548,18 +540,16 @@ class _HomeScreenState extends State<HomeScreen> {
       // BOTTOM NAV
       // =======================================================================
 
-      bottomNavigationBar:
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
           AppBottomNavBar(
-        currentIndex:
-            widget.currentNavIndex,
-        onTap: (
-          index,
-        ) {
-          _handleNavTap(
-            context,
-            index,
-          );
-        },
+            currentIndex: widget.currentNavIndex,
+            onTap: (index) {
+              _handleNavTap(context, index);
+            },
+          ),
+        ],
       ),
     );
   }
@@ -588,19 +578,23 @@ class _SectionHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: AppTypography.h3,
-        ),
-        TextButton(
-          onPressed: onViewAll,
-          child: Text(
-            'View all',
-            style:
-                AppTypography.caption.copyWith(
-              color: AppColors.primary,
-              fontWeight: FontWeight.w600,
-            ),
+          style: AppTypography.h3.copyWith(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
           ),
         ),
+        if (onViewAll != null)
+          TextButton(
+            onPressed: onViewAll,
+            child: Text(
+              'View all',
+              style:
+                  AppTypography.caption.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
       ],
     );
   }

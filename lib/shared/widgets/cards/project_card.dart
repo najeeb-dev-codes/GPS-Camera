@@ -17,6 +17,7 @@ class ProjectCard extends StatelessWidget {
     required this.photoCount,
     this.location,
     this.imageProvider,
+    this.coverColor,
     this.statusLabel,
     this.statusColor,
     this.updatedLabel,
@@ -31,6 +32,9 @@ class ProjectCard extends StatelessWidget {
   /// Optional — omit for a compact card (e.g. Home's "Recent Project").
   final String? location;
   final ImageProvider? imageProvider;
+
+  /// Project-selected background color for the initials cover.
+  final Color? coverColor;
 
   /// e.g. "Active" / "Archived".
   final String? statusLabel;
@@ -55,7 +59,7 @@ class ProjectCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
-          color: AppColors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(color: AppColors.border),
         ),
@@ -63,20 +67,19 @@ class ProjectCard extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: Container(
-                width: 48,
-                height: 48,
-                color: AppColors.neutral100,
-                child: imageProvider != null
-                    ? Image(
-                        image: imageProvider!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => const Icon(
-                          Icons.image_outlined,
-                          color: AppColors.neutral400,
-                        ),
-                      )
-                    : const Icon(Icons.folder_copy_outlined, color: AppColors.neutral400),
+              child: SizedBox.square(
+                dimension: 84,
+                child: Container(
+                  color: coverColor ?? AppColors.mutedSurface,
+                  child: imageProvider != null
+                      ? Image(
+                          image: imageProvider!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _ProjectInitials(name: name, color: coverColor),
+                        )
+                      : _ProjectInitials(name: name, color: coverColor),
+                ),
               ),
             ),
             const SizedBox(width: AppSpacing.md),
@@ -133,6 +136,45 @@ class ProjectCard extends StatelessWidget {
               const Icon(Icons.chevron_right, color: AppColors.neutral400),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _ProjectInitials extends StatelessWidget {
+  const _ProjectInitials({required this.name, required this.color});
+
+  final String name;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final words = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    final initials = words.length == 1
+        ? String.fromCharCodes(words.first.runes.take(2)).toUpperCase()
+        : words
+            .take(2)
+            .map((word) => String.fromCharCode(word.runes.first).toUpperCase())
+            .join();
+    final backgroundColor = color ?? AppColors.mutedSurface;
+    final isLightBackground = backgroundColor.value == 0xFFFFFFFF;
+    final textColor = isLightBackground ? Colors.black : Colors.white;
+
+    return Center(
+      child: Text(
+        initials.isEmpty ? '?' : initials,
+        maxLines: 1,
+        overflow: TextOverflow.clip,
+        style: AppTypography.bodyMedium.copyWith(
+          fontSize: 28,
+          fontWeight: FontWeight.w700,
+          color: textColor,
         ),
       ),
     );
