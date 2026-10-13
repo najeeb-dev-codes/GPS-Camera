@@ -1,31 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Android 9 (API 28) blocks plain HTTP (cleartext) by default. Our backend
-  is HTTP-only during local development (emulator / same-Wi-Fi physical
-  device testing), so we allow cleartext ONLY for those specific dev
-  hosts below — production traffic to https://yourdomain.com is
-  unaffected and still requires HTTPS as normal, since it's not listed
-  here and base-config cleartextTrafficPermitted stays "false".
+  Release network security configuration.
+  All traffic must use HTTPS. Plain HTTP (cleartext) is not permitted.
+  Local development hosts are allowed only in the debug build, see
+  android/app/src/debug/res/xml/network_security_config.xml
 -->
 <network-security-config>
-
-    <domain-config cleartextTrafficPermitted="true">
-        <!-- Android emulator -> host machine loopback alias -->
-        <domain includeSubdomains="false">10.0.2.2</domain>
-
-        <!-- iOS simulator / local loopback (harmless to include on Android too) -->
-        <domain includeSubdomains="false">127.0.0.1</domain>
-        <domain includeSubdomains="false">localhost</domain>
-
-        <!--
-          Physical device on the same Wi-Fi as the dev backend.
-          Update this to match FLUTTER_API_INTEGRATION_GUIDE.md / your
-          machine's LAN IP (and AppConfig._lanDevIp) whenever it changes.
-        -->
-        <domain includeSubdomains="false">192.168.1.36</domain>
-    </domain-config>
-
-    <!-- Everything else (including production) must use HTTPS. -->
     <base-config cleartextTrafficPermitted="false" />
-
 </network-security-config>
